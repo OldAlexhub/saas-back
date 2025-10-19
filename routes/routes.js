@@ -2,84 +2,85 @@ import { Router } from "express";
 import multer from "multer";
 import path from "path";
 
-import { authenticate, requireAdmin } from "../middleware/auth.js";
 import config from "../config/index.js";
+import { authenticate, requireAdmin } from "../middleware/auth.js";
 
 // Controllers
 import {
-  addActive,
-  getActiveById,
-  getAllActives,
-  setAvailability,
-  setStatus,
-  updateActive,
+    addActive,
+    getActiveById,
+    getAllActives,
+    setAvailability,
+    setStatus,
+    updateActive,
 } from "../controllers/Activate.js";
 import {
-  addAdmins,
-  AdminLogin,
-  listAdmins,
-  updateApproval,
+    addAdmins,
+    AdminLogin,
+    listAdmins,
+    updateApproval,
 } from "../controllers/Admins.js";
 import {
-  addDriver,
-  getDriverById,
-  listDrivers,
-  setDriverAppCredentials,
-  updateDriver,
-} from "../controllers/Drivers.js";
-import { listDriverLocationTimeline } from "../controllers/DriverLocationTimeline.js";
-import {
-  assignBooking,
-  cancelBooking,
-  changeStatus,
-  createBooking,
-  getBookingById,
-  listBookings,
-  updateBooking,
+    assignBooking,
+    cancelBooking,
+    changeStatus,
+    createBooking,
+    getBookingById,
+    listBookings,
+    updateBooking,
 } from "../controllers/Booking.js";
-import { addFare, getFare, updateFare } from "../controllers/Fares.js";
 import {
-  createFlatRate,
-  deleteFlatRate,
-  listFlatRates,
-  updateFlatRate,
-} from "../controllers/FlatRates.js";
-import {
-  addVehicle,
-  getVehicle,
-  listVehicles,
-  updateVehicle,
-} from "../controllers/Vehicles.js";
-import {
-  getCompanyProfile,
-  updateCompanyProfile,
+    getCompanyProfile,
+    updateCompanyProfile,
 } from "../controllers/Company.js";
 import {
-  changeDriverPassword,
-  loginDriver,
-  logoutDriver,
-} from "../controllers/DriverAppAuth.js";
-import {
-  acknowledgeMyBooking,
-  declineMyBooking,
-  createFlagdownRide,
-  getCurrentAssignment,
-  getDriverProfile,
-  getDriverFare,
-  listMyBookings,
-  reportBookingLocation,
-  updateMyBookingStatus,
-  updatePresence,
-  registerDriverPushToken,
+    acknowledgeMyBooking,
+    createFlagdownRide,
+    declineMyBooking,
+    getCurrentAssignment,
+    getDriverFare,
+    getDriverProfile,
+    listMyBookings,
+    registerDriverPushToken,
+    reportBookingLocation,
+    updateMyBookingStatus,
+    updatePresence,
 } from "../controllers/DriverApp.js";
-import { authenticateDriver } from "../middleware/driverAuth.js";
 import {
-  createDriverMessage,
-  deleteDriverMessage,
-  listDriverMessages,
-  sendDriverMessageNow,
-  updateDriverMessage,
+    changeDriverPassword,
+    loginDriver,
+    logoutDriver,
+} from "../controllers/DriverAppAuth.js";
+import { listDriverLocationTimeline } from "../controllers/DriverLocationTimeline.js";
+import {
+    createDriverMessage,
+    deleteDriverMessage,
+    listDriverMessages,
+    sendDriverMessageNow,
+    updateDriverMessage,
 } from "../controllers/DriverMessages.js";
+import {
+    addDriver,
+    getDriverById,
+    listDrivers,
+    setDriverAppCredentials,
+    updateDriver,
+} from "../controllers/Drivers.js";
+import { addFare, getFare, updateFare } from "../controllers/Fares.js";
+import {
+    createFlatRate,
+    deleteFlatRate,
+    listFlatRates,
+    updateFlatRate,
+} from "../controllers/FlatRates.js";
+import { downloadVehicleFilesZip, listVehicleFiles } from "../controllers/VehicleFiles.js";
+import {
+    addVehicle,
+    getVehicle,
+    listVehicles,
+    updateVehicle,
+} from "../controllers/Vehicles.js";
+import { authenticateDriver } from "../middleware/driverAuth.js";
 
 const router = Router();
 const driverAppRouter = Router();
@@ -128,6 +129,9 @@ router.get("/vehicles", listVehicles);
 router.post("/vehicles", upload.single("annualInspectionFile"), addVehicle);
 router.get("/vehicles/:id", getVehicle);
 router.put("/vehicles/:id", upload.single("annualInspectionFile"), updateVehicle);
+// Vehicle files: list and batch download (zip)
+router.get('/vehicle-files', listVehicleFiles);
+router.get('/vehicle-files/zip', downloadVehicleFilesZip);
 
 // =================== ACTIVE ===================
 router.post("/actives", addActive);
