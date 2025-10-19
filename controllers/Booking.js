@@ -1,5 +1,6 @@
 import ActiveModel from "../models/ActiveSchema.js";
 import BookingModel from "../models/BookingSchema.js";
+import { COMPANY_ID, CompanyModel } from "../models/CompanySchema.js";
 import { emitToAdmins, emitToDriver } from "../realtime/index.js";
 import { toAdminBookingPayload, toDriverBookingPayload } from "../realtime/payloads.js";
 import { geocodeAddress, getDrivingDistanceMiles } from "../utils/mapbox.js";
@@ -109,14 +110,42 @@ async function hasConflict({ bookingIdToIgnore, driverId, cabNumber, pickupTime 
   return !!conflict;
 }
 
-const AUTO_DISPATCH_MAX_DISTANCE_METERS = 10000; // ~6 miles
-const AUTO_DISPATCH_MAX_CANDIDATES = 20;
-const AUTO_DISPATCH_DISTANCE_STEPS_METERS = [1, 2, 3, 4, 5, 6]
-  .map((miles) => {
-    const meters = Math.round(miles * 1609.34);
-    return meters > AUTO_DISPATCH_MAX_DISTANCE_METERS ? AUTO_DISPATCH_MAX_DISTANCE_METERS : meters;
-  })
-  .filter((distance, index, array) => array.indexOf(distance) === index);
+// Defaults (used if company profile doesn't specify settings)
+const DEFAULT_AUTO_DISPATCH_MAX_DISTANCE_METERS = 10000; // ~6 miles
+const DEFAULT_AUTO_DISPATCH_MAX_CANDIDATES = 20;
+const DEFAULT_AUTO_DISPATCH_DISTANCE_STEPS_MILES = [1, 2, 3, 4, 5, 6];
+
+async function loadDispatchSettings() {
+  try {
+    const company = await CompanyModel.findById(COMPANY_ID).lean();
+    const ds = company?.dispatchSettings || {};
+    const maxDistanceMiles = Number.isFinite(Number(ds.maxDistanceMiles)) ? Number(ds.maxDistanceMiles) : undefined;
+    const maxCandidates = Number.isFinite(Number(ds.maxCandidates)) ? Number(ds.maxCandidates) : undefined;
+    const distanceStepsMiles = Array.isArray(ds.distanceStepsMiles) ? ds.distanceStepsMiles.map(Number).filter((n) => Number.isFinite(n) && n > 0) : undefined;
+
+    const maxDistanceMeters = (maxDistanceMiles !== undefined ? Math.round(maxDistanceMiles * 1609.34) : DEFAULT_AUTO_DISPATCH_MAX_DISTANCE_METERS);
+    const candidates = maxCandidates !== undefined ? Math.max(1, Math.round(maxCandidates)) : DEFAULT_AUTO_DISPATCH_MAX_CANDIDATES;
+    const stepsMiles = distanceStepsMiles && distanceStepsMiles.length ? distanceStepsMiles : DEFAULT_AUTO_DISPATCH_DISTANCE_STEPS_MILES;
+
+    const stepsMeters = stepsMiles
+      .map((miles) => Math.round(miles * 1609.34))
+      .map((meters) => (meters > maxDistanceMeters ? maxDistanceMeters : meters))
+      .filter((distance, index, array) => array.indexOf(distance) === index);
+
+    return {
+      maxDistanceMeters,
+      maxCandidates: candidates,
+      distanceStepsMeters: stepsMeters,
+    };
+  } catch (err) {
+    console.warn('Unable to load company dispatch settings, falling back to defaults:', err.message);
+    return {
+      maxDistanceMeters: DEFAULT_AUTO_DISPATCH_MAX_DISTANCE_METERS,
+      maxCandidates: DEFAULT_AUTO_DISPATCH_MAX_CANDIDATES,
+      distanceStepsMeters: DEFAULT_AUTO_DISPATCH_DISTANCE_STEPS_MILES.map((m) => Math.round(m * 1609.34)),
+    };
+  }
+}
 
 function hasGeoPoint(point) {
   return (
@@ -213,6 +242,7 @@ async function fetchDrivingDistanceMiles(pickupPoint, dropoffPoint) {
 
 async function findAutomaticAssignment({ booking }) {
   const baseQuery = { status: "Active", availability: "Online" };
+  const { maxDistanceMeters, maxCandidates: AUTO_DISPATCH_MAX_CANDIDATES, distanceStepsMeters: AUTO_DISPATCH_DISTANCE_STEPS_METERS } = await loadDispatchSettings();
   const pickupPoint = hasGeoPoint(booking.pickupPoint) ? booking.pickupPoint : null;
   const evaluated = new Set();
   const busyDriverCache = new Map();
@@ -556,6 +586,116 @@ export const createBooking = async (req, res) => {
     addAudit(booking, { byUserId, action: "create", after: booking.toObject() });
 
     await booking.save();
+    // If the request asked for automatic dispatch, attempt immediate auto-assignment
+    if (dispatchMethodNormalized === 'auto') {
+      // If we don't have pickup coords, we cannot run automatic dispatch — mark for reassignment
+      if (!hasGeoPoint(booking.pickupPoint)) {
+        booking.dispatchMethod = 'auto';
+        booking.needs_reassignment = true;
+        addAudit(booking, {
+          byUserId,
+          action: 'assign',
+          before: null,
+          after: {
+            driverId: booking.driverId,
+            cabNumber: booking.cabNumber,
+            status: booking.status,
+            dispatchMethod: booking.dispatchMethod,
+            needs_reassignment: booking.needs_reassignment,
+          },
+          note: 'auto-dispatch-unassigned',
+        });
+        await booking.save();
+        return res.status(201).json({ message: 'Booking created', booking, needsManual: true });
+      }
+
+      // Try to select a driver automatically
+      const automaticSelection = await findAutomaticAssignment({ booking });
+      if (!automaticSelection) {
+        booking.dispatchMethod = 'auto';
+        booking.needs_reassignment = true;
+        addAudit(booking, {
+          byUserId,
+          action: 'assign',
+          before: null,
+          after: {
+            driverId: booking.driverId,
+            cabNumber: booking.cabNumber,
+            status: booking.status,
+            dispatchMethod: booking.dispatchMethod,
+            needs_reassignment: booking.needs_reassignment,
+          },
+          note: 'auto-dispatch-unassigned',
+        });
+        await booking.save();
+        return res.status(201).json({ message: 'Booking created', booking, needsManual: true });
+      }
+
+      const resolvedDriverId = automaticSelection.driverId;
+      const resolvedCabNumber = automaticSelection.cabNumber;
+
+      // validate and apply assignment
+      try {
+        await validateActiveForAssignment({ driverId: resolvedDriverId, cabNumber: resolvedCabNumber });
+      } catch (validationError) {
+        // If validation fails, mark for manual reassignment
+        booking.dispatchMethod = 'auto';
+        booking.needs_reassignment = true;
+        addAudit(booking, {
+          byUserId,
+          action: 'assign',
+          before: null,
+          after: {
+            driverId: booking.driverId,
+            cabNumber: booking.cabNumber,
+            status: booking.status,
+            dispatchMethod: booking.dispatchMethod,
+            needs_reassignment: booking.needs_reassignment,
+          },
+          note: 'auto-dispatch-validation-failed',
+        });
+        await booking.save();
+        return res.status(201).json({ message: 'Booking created', booking, needsManual: true });
+      }
+
+      booking.driverId = resolvedDriverId;
+      booking.cabNumber = resolvedCabNumber ?? null;
+      booking.dispatchMethod = 'auto';
+      booking.assignedAt = booking.assignedAt || new Date();
+      if (booking.status === 'Pending') {
+        booking.status = 'Assigned';
+        stampStatusTime(booking, 'Assigned');
+      }
+      booking.needs_reassignment = false;
+
+      addAudit(booking, {
+        byUserId,
+        action: 'assign',
+        before: null,
+        after: {
+          driverId: booking.driverId,
+          cabNumber: booking.cabNumber,
+          status: booking.status,
+          dispatchMethod: booking.dispatchMethod,
+          needs_reassignment: booking.needs_reassignment,
+        },
+        note: 'auto-dispatch',
+      });
+
+      await booking.save();
+
+      const driverPayload = toDriverBookingPayload(booking);
+      if (driverPayload?.driverId) {
+        emitToDriver(driverPayload.driverId, 'assignment:new', driverPayload);
+      }
+      emitToAdmins('assignment:updated', {
+        event: 'assigned',
+        booking: toAdminBookingPayload(booking),
+      });
+
+      return res.status(201).json({ message: 'Booking created and assigned', booking });
+    }
+
     return res.status(201).json({ message: "Booking created", booking });
   } catch (err) {
     console.error("createBooking error:", err);
