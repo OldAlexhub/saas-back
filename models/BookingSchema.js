@@ -68,13 +68,12 @@ const BookingSchema = new mongoose.Schema(
       type: String,
       enum: ["Pending", "Assigned", "EnRoute", "PickedUp", "Completed", "Cancelled", "NoShow"],
       default: "Pending",
-      index: true,
     },
     driverId: { type: String, trim: true },     // matches Active.driverId (String)
     cabNumber: { type: String, trim: true },    // matches Active.cabNumber (String)
     assignedAt: { type: Date },
     dispatchMethod: { type: String, enum: ["auto", "manual", "flagdown"], default: "manual" },
-    tripSource: { type: String, enum: ["dispatch", "driver"], default: "dispatch", index: true },
+  tripSource: { type: String, enum: ["dispatch", "driver"], default: "dispatch" },
 
     flagdown: {
       createdByDriverId: { type: String, trim: true },
@@ -169,7 +168,6 @@ const BookingSchema = new mongoose.Schema(
 // ----- Indexes -----
 BookingSchema.index({ pickupPoint: "2dsphere" });
 BookingSchema.index({ dropoffPoint: "2dsphere" });
-BookingSchema.index({ bookingId: 1 }, { unique: true });
 BookingSchema.index({ status: 1, pickupTime: 1 });
 BookingSchema.index({ driverId: 1, pickupTime: 1, status: 1 });
 BookingSchema.index({ cabNumber: 1, pickupTime: 1, status: 1 });

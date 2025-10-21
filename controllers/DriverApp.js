@@ -1,6 +1,6 @@
+import config from "../config/index.js";
 import ActiveModel from "../models/ActiveSchema.js";
 import BookingModel from "../models/BookingSchema.js";
-// Diagnostics model removed
 import DriverHOSModel from "../models/DriverHOS.js";
 import DriverLocationTimelineModel from "../models/DriverLocationTimeline.js";
 import DriverModel from "../models/DriverSchema.js";
@@ -1072,3 +1072,39 @@ export const getHosSummary = async (req, res) => {
 };
 
 // Diagnostics endpoint removed
+
+export const uploadDiagnostics = async (req, res) => {
+  try {
+    // honor server-side toggle for diagnostics collection
+    if (!config.diagnostics || !config.diagnostics.enabled) {
+      return res.status(403).json({ message: "Diagnostics upload is disabled on this server." });
+    }
+    const driverId = req.driver.driverId;
+    const body = req.body || {};
+    // allow either single entry or array
+    const entries = Array.isArray(body) ? body : [body];
+    const docs = entries
+      .map((e) => ({
+        driverId,
+        at: e.at ? new Date(e.at) : new Date(),
+        level: e.level || 'info',
+        tag: e.tag || null,
+        message: e.message || null,
+        payload: e.payload || null,
+      }))
+      .slice(0, 200); // guard against huge payloads
+
+    if (docs.length === 0) return res.status(400).json({ message: 'No diagnostics entries supplied.' });
+
+    try {
+      await DriverDiagnosticsModel.insertMany(docs, { ordered: false });
+    } catch (insertErr) {
+      console.warn('Diagnostics insert partial failure', insertErr && insertErr.message ? insertErr.message : insertErr);
+    }
+
+    return res.status(201).json({ message: 'Diagnostics recorded.' });
+  } catch (err) {
+    console.error('uploadDiagnostics error', err);
+    return res.status(500).json({ message: 'Failed to upload diagnostics.' });
+  }
+};

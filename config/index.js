@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
-import path from "path";
 import { mkdirSync } from "fs";
+import path from "path";
 
 dotenv.config();
 
@@ -39,6 +39,20 @@ const config = {
   },
   uploads: {
     vehiclesDir: uploadsDir,
+  },
+  diagnostics: {
+    // If not set, default to enabled (true). Value may be 'true'|'false' or '1'|'0'.
+    enabled:
+      process.env.DIAGNOSTICS_UPLOAD_ENABLED === undefined
+        ? true
+        : String(process.env.DIAGNOSTICS_UPLOAD_ENABLED).trim().toLowerCase() === "true" ||
+          String(process.env.DIAGNOSTICS_UPLOAD_ENABLED).trim() === "1",
+    retentionDays: (() => {
+      const v = process.env.DIAGNOSTICS_RETENTION_DAYS;
+      if (!v) return null;
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    })(),
   },
 };
 

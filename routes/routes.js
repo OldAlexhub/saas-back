@@ -15,6 +15,7 @@ import {
     updateActive,
 } from "../controllers/Activate.js";
 // Admin diagnostics controller removed
+import { listDiagnostics } from "../controllers/AdminDiagnostics.js";
 import {
     addAdmins,
     AdminLogin,
@@ -122,6 +123,9 @@ router.post("/messages/send-now", sendDriverMessageNow);
 router.patch("/messages/:id", updateDriverMessage);
 router.delete("/messages/:id", deleteDriverMessage);
 
+// Admin diagnostics: query diagnostics submitted by drivers
+router.get('/admin/diagnostics', listDiagnostics);
+
 // =================== DRIVERS ==================
 router.post("/drivers", addDriver);
 router.get("/drivers", listDrivers);
@@ -194,6 +198,17 @@ driverAppRouter.post('/hos', appendHos);
 // instead: one for the collection and one for a specific driver id.
 driverAppRouter.get('/hos', getHosSummary);
 driverAppRouter.get('/hos/:driverId', getHosSummary);
+// Upload diagnostics from driver app (requires driver auth)
+driverAppRouter.post('/diagnostics', async (req, res) => {
+    // Delegate to controller implementation inside DriverApp.js to keep auth/context consistent
+    try {
+        const { uploadDiagnostics } = await import('../controllers/DriverApp.js');
+        return await uploadDiagnostics(req, res);
+    } catch (err) {
+        console.error('Diagnostics route error', err);
+        return res.status(500).json({ message: 'Failed to handle diagnostics upload' });
+    }
+});
 // Upload diagnostics from driver app (requires driver auth)
 // Driver diagnostics upload endpoint removed
 

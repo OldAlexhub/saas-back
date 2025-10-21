@@ -23,7 +23,7 @@ const DriverMessageSchema = new mongoose.Schema(
       },
     },
     sendAt: { type: Date, required: true },
-    nextRunAt: { type: Date, required: true, index: true },
+  nextRunAt: { type: Date, required: true },
     lastRunAt: { type: Date },
     scheduleType: {
       type: String,
@@ -40,7 +40,6 @@ const DriverMessageSchema = new mongoose.Schema(
       type: String,
       enum: ["scheduled", "sent", "cancelled"],
       default: "scheduled",
-      index: true,
     },
     createdBy: { type: String },
     notes: { type: String, maxlength: 500 },
@@ -49,6 +48,10 @@ const DriverMessageSchema = new mongoose.Schema(
 );
 
 DriverMessageSchema.index({ status: 1, nextRunAt: 1 });
+
+// ensure single-field indexes that were previously inline
+DriverMessageSchema.index({ nextRunAt: 1 });
+DriverMessageSchema.index({ status: 1 });
 
 const DriverMessageModel = mongoose.model("driver_messages", DriverMessageSchema);
 
