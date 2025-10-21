@@ -26,15 +26,35 @@ export const listVehicleFiles = async (req, res) => {
     const files = [];
     for (const v of vehicles) {
       if (v.annualInspectionFile && v.annualInspectionFile.filename) {
-        const filePath = path.join(config.uploads.vehiclesDir, v.annualInspectionFile.filename);
-        const available = fs.existsSync(filePath);
+        const filename = v.annualInspectionFile.filename;
+        // candidate locations where uploads might be stored
+        const candidates = [
+          path.join(config.uploads.vehiclesDir, filename),
+          path.join(process.cwd(), 'public', 'uploads', 'vehicles', filename),
+          path.join(process.cwd(), 'server', 'public', 'uploads', 'vehicles', filename),
+        ];
+
+        let available = false;
+        for (const p of candidates) {
+          try {
+            if (fs.existsSync(p)) {
+              available = true;
+              break;
+            }
+          } catch (e) {
+            // ignore and try next candidate
+          }
+        }
+
         files.push({
           vehicleId: v._id,
           cabNumber: v.cabNumber,
-          filename: v.annualInspectionFile.filename,
+          filename,
           originalName: v.annualInspectionFile.originalName,
           mimeType: v.annualInspectionFile.mimeType,
           size: v.annualInspectionFile.size,
+          // expose an authenticated download endpoint (admins only)
+          downloadUrl: `/api/vehicles/${v._id}/inspection`,
           url: v.annualInspectionFile.url,
           available,
         });

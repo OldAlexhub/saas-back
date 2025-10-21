@@ -536,22 +536,30 @@ export const reportBookingLocation = async (req, res) => {
       return res.status(400).json({ message: "lat and lng are required and must be numbers." });
     }
 
-    try {
-      await DriverLocationTimelineModel.create({
-        driverId: req.driver.driverId,
-        bookingId: booking._id,
-        tripSource: booking.tripSource || "dispatch",
-        point: {
-          type: "Point",
-          coordinates: update.location.coordinates,
-        },
-        speed: update.location.speed,
-        heading: update.location.heading,
-        accuracy: update.location.accuracy,
-        capturedAt: update.location.updatedAt || new Date(),
-      });
-    } catch (timelineError) {
-      console.warn("timeline insert error:", timelineError.message);
+    // Only persist timeline coordinates when driver is actively on a trip:
+    // - booking.status is EnRoute or PickedUp (dispatched)
+    // - or the dispatchMethod is 'flagdown' (driver-initiated trip)
+    const shouldPersistTimeline =
+      booking.dispatchMethod === 'flagdown' || ["EnRoute", "PickedUp"].includes(booking.status);
+
+    if (shouldPersistTimeline) {
+      try {
+        await DriverLocationTimelineModel.create({
+          driverId: req.driver.driverId,
+          bookingId: booking._id,
+          tripSource: booking.tripSource || "dispatch",
+          point: {
+            type: "Point",
+            coordinates: update.location.coordinates,
+          },
+          speed: update.location.speed,
+          heading: update.location.heading,
+          accuracy: update.location.accuracy,
+          capturedAt: update.location.updatedAt || new Date(),
+        });
+      } catch (timelineError) {
+        console.warn("timeline insert error:", timelineError.message);
+      }
     }
 
     booking.driverLocation = update.location;
@@ -1030,6 +1038,24 @@ export const appendHos = async (req, res) => {
     // Append a new daily entry (append-only). Consumers will aggregate.
     await DriverHOSModel.create({ driverId, date, minutes: mins });
 
+    // Also update cumulative totals on the active roster so the server maintains a persistent
+    // running total that doesn't rely on client-side state. Use an atomic $inc.
+    try {
+      const now = new Date();
+      await ActiveModel.updateOne(
+        { driverId },
+        {
+          $inc: {
+            cumulativeDrivingMinutes: mins,
+            cumulativeOnDutyMinutes: mins,
+          },
+          $set: { cumulativeUpdatedAt: now },
+        }
+      );
+    } catch (incErr) {
+      console.warn('Failed to update cumulative HOS on Active record', incErr && incErr.message ? incErr.message : incErr);
+    }
+
     return res.status(201).json({ message: 'HOS delta recorded' });
   } catch (err) {
     console.error('appendHos error', err);
@@ -1064,7 +1090,20 @@ export const getHosSummary = async (req, res) => {
     const totals = dates.map((d) => ({ date: d, minutes: byDate.get(d) || 0 }));
     const sum = totals.reduce((s, t) => s + t.minutes, 0);
 
-    return res.status(200).json({ days: totals, sum });
+    // Read cumulative totals from Active record if available
+    let cumulative = { cumulativeDrivingMinutes: 0, cumulativeOnDutyMinutes: 0, cumulativeUpdatedAt: null };
+    try {
+      const active = await ActiveModel.findOne({ driverId }).select('hoursOfService cumulativeDrivingMinutes cumulativeOnDutyMinutes cumulativeUpdatedAt').lean();
+      if (active) {
+        cumulative.cumulativeDrivingMinutes = Number(active.cumulativeDrivingMinutes || 0);
+        cumulative.cumulativeOnDutyMinutes = Number(active.cumulativeOnDutyMinutes || 0);
+        cumulative.cumulativeUpdatedAt = active.cumulativeUpdatedAt || null;
+      }
+    } catch (readErr) {
+      console.warn('Failed to read cumulative HOS from Active record', readErr && readErr.message ? readErr.message : readErr);
+    }
+
+    return res.status(200).json({ days: totals, sum, cumulative });
   } catch (err) {
     console.error('getHosSummary error', err);
     return res.status(500).json({ message: 'Failed to fetch HOS summary' });

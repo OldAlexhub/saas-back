@@ -92,6 +92,11 @@ const ActiveSchema = new mongoose.Schema({
     cycleStart: { type: Date },               // when current HOS cycle began
     lastResetAt: { type: Date },              // last 34h/24h reset (depending on your policy)
 
+  // Cumulative totals persisted server-side so values don't reset on login
+  cumulativeDrivingMinutes: { type: Number, min: 0, default: 0 },
+  cumulativeOnDutyMinutes: { type: Number, min: 0, default: 0 },
+  cumulativeUpdatedAt: { type: Date },
+
     violations: { type: [HosViolationSchema], default: [] }
   },
 
