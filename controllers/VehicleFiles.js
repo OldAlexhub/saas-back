@@ -27,11 +27,16 @@ export const listVehicleFiles = async (req, res) => {
     for (const v of vehicles) {
       if (v.annualInspectionFile && v.annualInspectionFile.filename) {
         const filename = v.annualInspectionFile.filename;
-        // candidate locations where uploads might be stored
+        // candidate locations where uploads might be stored. Projects may run
+        // with different working directories (root, server/, client/) depending
+        // on how the process is started. Check a few likely places.
         const candidates = [
           path.join(config.uploads.vehiclesDir, filename),
           path.join(process.cwd(), 'public', 'uploads', 'vehicles', filename),
           path.join(process.cwd(), 'server', 'public', 'uploads', 'vehicles', filename),
+          path.join(process.cwd(), '..', 'public', 'uploads', 'vehicles', filename),
+          path.join(process.cwd(), '..', 'client', 'public', 'uploads', 'vehicles', filename),
+          path.join(process.cwd(), '..', 'server', 'public', 'uploads', 'vehicles', filename),
         ];
 
         let available = false;
@@ -46,7 +51,7 @@ export const listVehicleFiles = async (req, res) => {
           }
         }
 
-        files.push({
+        const fileEntry = {
           vehicleId: v._id,
           cabNumber: v.cabNumber,
           filename,
@@ -57,7 +62,14 @@ export const listVehicleFiles = async (req, res) => {
           downloadUrl: `/api/vehicles/${v._id}/inspection`,
           url: v.annualInspectionFile.url,
           available,
-        });
+        };
+
+        if (!available) {
+          // include the candidate paths we checked to help admin debug missing files
+          fileEntry.checkedPaths = candidates;
+        }
+
+        files.push(fileEntry);
       }
     }
     return res.status(200).json({ count: files.length, files });
