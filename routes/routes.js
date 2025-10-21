@@ -14,6 +14,7 @@ import {
     setStatus,
     updateActive,
 } from "../controllers/Activate.js";
+import { listDiagnostics } from "../controllers/AdminDiagnostics.js";
 import {
     addAdmins,
     AdminLogin,
@@ -128,6 +129,8 @@ router.patch("/drivers/:id/app-credentials", setDriverAppCredentials);
 router.get("/vehicles", listVehicles);
 router.post("/vehicles", upload.single("annualInspectionFile"), addVehicle);
 router.get("/vehicles/:id", getVehicle);
+// Authenticated download of a vehicle's inspection file (admins only)
+router.get("/vehicles/:id/inspection", authenticate, requireAdmin, downloadInspectionFile);
 router.put("/vehicles/:id", upload.single("annualInspectionFile"), updateVehicle);
 // Vehicle files: list and batch download (zip)
 router.get('/vehicle-files', listVehicleFiles);
@@ -140,6 +143,9 @@ router.put("/actives/:id/status", setStatus);
 router.put("/actives/:id/availability", setAvailability);
 router.get("/actives", getAllActives);
 router.get("/actives/:id", getActiveById);
+
+// Admin diagnostics viewer
+router.get('/diagnostics', listDiagnostics);
 
 // =================== FARES ====================
 router.post("/fares", addFare);
@@ -177,6 +183,11 @@ driverAppRouter.post("/bookings/:id/location", reportBookingLocation);
 driverAppRouter.post("/flagdowns", createFlagdownRide);
 driverAppRouter.patch("/presence", updatePresence);
 driverAppRouter.post("/push-token", registerDriverPushToken);
+// Hours-of-service endpoints (driver POSTs deltas, admin/driver can read summary)
+driverAppRouter.post('/hos', appendHos);
+driverAppRouter.get('/hos/:driverId?', getHosSummary);
+// Upload diagnostics from driver app (requires driver auth)
+driverAppRouter.post('/diagnostics', uploadDiagnostics);
 
 export { driverAppRouter };
 export default router;

@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
-import VehicleModel from "../models/VehicleSchema.js";
 import config from "../config/index.js";
+import VehicleModel from "../models/VehicleSchema.js";
 
 function buildFileRecord(file) {
   if (!file) return undefined;
@@ -162,5 +162,35 @@ export const getVehicle = async (req, res) => {
   } catch (error) {
     console.error("Failed to fetch vehicle:", error);
     return res.status(500).json({ message: "Failed to fetch vehicle", error: error.message });
+  }
+};
+
+// Authenticated download of a single vehicle's inspection file
+export const downloadInspectionFile = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const vehicle = await VehicleModel.findById(id).lean();
+    if (!vehicle) return res.status(404).json({ message: 'Vehicle not found' });
+    const record = vehicle.annualInspectionFile;
+    if (!record || !record.filename) return res.status(404).json({ message: 'Inspection file not found for vehicle' });
+
+    const fullPath = path.join(config.uploads.vehiclesDir, record.filename);
+    // Use fs.promises.stat to check existence
+    try {
+      await fs.stat(fullPath);
+    } catch (err) {
+      return res.status(404).json({ message: 'Inspection file not available on disk' });
+    }
+
+    // Stream the file as an attachment with original filename
+    return res.download(fullPath, record.originalName || record.filename, (err) => {
+      if (err) {
+        console.error('Failed to send inspection file', err);
+        if (!res.headersSent) return res.status(500).json({ message: 'Failed to send file' });
+      }
+    });
+  } catch (error) {
+    console.error('Error in downloadInspectionFile', error);
+    return res.status(500).json({ message: 'Failed to download inspection file', error: error.message });
   }
 };

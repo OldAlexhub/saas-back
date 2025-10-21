@@ -1,16 +1,16 @@
-import { createServer } from "http";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
+import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 
 import config from "./config/index.js";
 import connectTodb from "./db/connectTodb.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
-import router, { driverAppRouter } from "./routes/routes.js";
 import { initRealtime } from "./realtime/index.js";
+import router, { driverAppRouter } from "./routes/routes.js";
 
 // APP
 const app = express();

@@ -1,7 +1,9 @@
 import ActiveModel from "../models/ActiveSchema.js";
 import BookingModel from "../models/BookingSchema.js";
-import DriverModel from "../models/DriverSchema.js";
+import DriverDiagnosticsModel from "../models/DriverDiagnostics.js";
+import DriverHOSModel from "../models/DriverHOS.js";
 import DriverLocationTimelineModel from "../models/DriverLocationTimeline.js";
+import DriverModel from "../models/DriverSchema.js";
 import { SINGLETON_ID as FARE_SINGLETON_ID, FareModel } from "../models/FareSchema.js";
 import FlatRateModel from "../models/FlatRateSchema.js";
 import { emitToAdmins, emitToDriver } from "../realtime/index.js";
@@ -1008,5 +1010,80 @@ export const updatePresence = async (req, res) => {
   } catch (error) {
     console.error("Driver presence update error:", error);
     return res.status(500).json({ message: "Server error while updating presence." });
+  }
+};
+
+// Accept HOS deltas from driver app: { date: 'YYYY-MM-DD', minutes: 5 }
+export const appendHos = async (req, res) => {
+  try {
+    const driverId = req.driver.driverId;
+    const { date, minutes } = req.body || {};
+    if (!date || !minutes) {
+      return res.status(400).json({ message: 'date and minutes are required' });
+    }
+
+    const mins = Number(minutes);
+    if (!Number.isFinite(mins) || mins <= 0) {
+      return res.status(400).json({ message: 'minutes must be a positive number' });
+    }
+
+    // Append a new daily entry (append-only). Consumers will aggregate.
+    await DriverHOSModel.create({ driverId, date, minutes: mins });
+
+    return res.status(201).json({ message: 'HOS delta recorded' });
+  } catch (err) {
+    console.error('appendHos error', err);
+    return res.status(500).json({ message: 'Failed to record HOS' });
+  }
+};
+
+// Return rolling sum for the last N days (default 8)
+export const getHosSummary = async (req, res) => {
+  try {
+    const driverId = req.params.driverId || req.driver.driverId;
+    const days = Math.max(1, Math.min(30, Number(req.query.days || 8)));
+
+    // compute date strings for the last N days (UTC)
+    const end = new Date();
+    const dates = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+      d.setUTCDate(d.getUTCDate() - i);
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      dates.push(`${y}-${m}-${day}`);
+    }
+
+    const rows = await DriverHOSModel.find({ driverId, date: { $in: dates } }).lean();
+    const byDate = new Map();
+    for (const r of rows) {
+      byDate.set(r.date, (byDate.get(r.date) || 0) + Number(r.minutes || 0));
+    }
+
+    const totals = dates.map((d) => ({ date: d, minutes: byDate.get(d) || 0 }));
+    const sum = totals.reduce((s, t) => s + t.minutes, 0);
+
+    return res.status(200).json({ days: totals, sum });
+  } catch (err) {
+    console.error('getHosSummary error', err);
+    return res.status(500).json({ message: 'Failed to fetch HOS summary' });
+  }
+};
+
+// Accept diagnostics payload from driver app and persist to DB for admin analysis
+export const uploadDiagnostics = async (req, res) => {
+  try {
+    const driverId = req.driver.driverId;
+    const payload = req.body || {};
+    if (!payload || (Array.isArray(payload) && payload.length === 0)) {
+      return res.status(400).json({ message: 'No diagnostics provided' });
+    }
+
+    await DriverDiagnosticsModel.create({ driverId, payload });
+    return res.status(201).json({ message: 'Diagnostics uploaded' });
+  } catch (err) {
+    console.error('uploadDiagnostics error', err);
+    return res.status(500).json({ message: 'Failed to upload diagnostics' });
   }
 };
