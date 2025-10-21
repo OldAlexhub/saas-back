@@ -77,11 +77,18 @@ import {
 import { downloadVehicleFilesZip, listVehicleFiles } from "../controllers/VehicleFiles.js";
 import {
     addVehicle,
+    downloadInspectionFile,
     getVehicle,
     listVehicles,
     updateVehicle,
 } from "../controllers/Vehicles.js";
 import { authenticateDriver } from "../middleware/driverAuth.js";
+
+import {
+    appendHos,
+    getHosSummary,
+    uploadDiagnostics,
+} from "../controllers/DriverApp.js";
 
 const router = Router();
 const driverAppRouter = Router();
@@ -185,7 +192,11 @@ driverAppRouter.patch("/presence", updatePresence);
 driverAppRouter.post("/push-token", registerDriverPushToken);
 // Hours-of-service endpoints (driver POSTs deltas, admin/driver can read summary)
 driverAppRouter.post('/hos', appendHos);
-driverAppRouter.get('/hos/:driverId?', getHosSummary);
+// The router used by this project doesn't accept the `?` optional
+// parameter syntax in route patterns. Register two explicit routes
+// instead: one for the collection and one for a specific driver id.
+driverAppRouter.get('/hos', getHosSummary);
+driverAppRouter.get('/hos/:driverId', getHosSummary);
 // Upload diagnostics from driver app (requires driver auth)
 driverAppRouter.post('/diagnostics', uploadDiagnostics);
 
