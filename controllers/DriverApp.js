@@ -1,6 +1,6 @@
 import ActiveModel from "../models/ActiveSchema.js";
 import BookingModel from "../models/BookingSchema.js";
-import DriverDiagnosticsModel from "../models/DriverDiagnostics.js";
+// Diagnostics model removed
 import DriverHOSModel from "../models/DriverHOS.js";
 import DriverLocationTimelineModel from "../models/DriverLocationTimeline.js";
 import DriverModel from "../models/DriverSchema.js";
@@ -1071,19 +1071,4 @@ export const getHosSummary = async (req, res) => {
   }
 };
 
-// Accept diagnostics payload from driver app and persist to DB for admin analysis
-export const uploadDiagnostics = async (req, res) => {
-  try {
-    const driverId = req.driver.driverId;
-    const payload = req.body || {};
-    if (!payload || (Array.isArray(payload) && payload.length === 0)) {
-      return res.status(400).json({ message: 'No diagnostics provided' });
-    }
-
-    await DriverDiagnosticsModel.create({ driverId, payload });
-    return res.status(201).json({ message: 'Diagnostics uploaded' });
-  } catch (err) {
-    console.error('uploadDiagnostics error', err);
-    return res.status(500).json({ message: 'Failed to upload diagnostics' });
-  }
-};
+// Diagnostics endpoint removed

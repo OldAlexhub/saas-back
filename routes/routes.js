@@ -14,7 +14,7 @@ import {
     setStatus,
     updateActive,
 } from "../controllers/Activate.js";
-import { listDiagnostics } from "../controllers/AdminDiagnostics.js";
+// Admin diagnostics controller removed
 import {
     addAdmins,
     AdminLogin,
@@ -87,9 +87,7 @@ import { authenticateDriver } from "../middleware/driverAuth.js";
 import {
     appendHos,
     getHosSummary,
-    uploadDiagnostics,
 } from "../controllers/DriverApp.js";
-
 const router = Router();
 const driverAppRouter = Router();
 
@@ -151,8 +149,7 @@ router.put("/actives/:id/availability", setAvailability);
 router.get("/actives", getAllActives);
 router.get("/actives/:id", getActiveById);
 
-// Admin diagnostics viewer
-router.get('/diagnostics', listDiagnostics);
+// Admin diagnostics viewer removed
 
 // =================== FARES ====================
 router.post("/fares", addFare);
@@ -198,7 +195,7 @@ driverAppRouter.post('/hos', appendHos);
 driverAppRouter.get('/hos', getHosSummary);
 driverAppRouter.get('/hos/:driverId', getHosSummary);
 // Upload diagnostics from driver app (requires driver auth)
-driverAppRouter.post('/diagnostics', uploadDiagnostics);
+// Driver diagnostics upload endpoint removed
 
 export { driverAppRouter };
 export default router;
