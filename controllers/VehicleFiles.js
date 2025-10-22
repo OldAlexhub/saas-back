@@ -1,5 +1,6 @@
 import archiver from 'archiver';
 import fs from 'fs';
+import mongoose from 'mongoose';
 import path from 'path';
 import config from '../config/index.js';
 import ActiveModel from '../models/ActiveSchema.js';
@@ -39,15 +40,23 @@ export const listVehicleFiles = async (req, res) => {
           path.join(process.cwd(), '..', 'server', 'public', 'uploads', 'vehicles', filename),
         ];
 
+        // Prefer GridFS if present, otherwise check candidate disk locations
         let available = false;
-        for (const p of candidates) {
-          try {
-            if (fs.existsSync(p)) {
-              available = true;
-              break;
+        let checkedStorage = [];
+        if (v.annualInspectionFile && v.annualInspectionFile.gridFsId) {
+          available = true;
+          checkedStorage.push('gridfs');
+        } else {
+          for (const p of candidates) {
+            try {
+              if (fs.existsSync(p)) {
+                available = true;
+                checkedStorage.push(p);
+                break;
+              }
+            } catch (e) {
+              // ignore and try next candidate
             }
-          } catch (e) {
-            // ignore and try next candidate
           }
         }
 
@@ -67,6 +76,8 @@ export const listVehicleFiles = async (req, res) => {
         if (!available) {
           // include the candidate paths we checked to help admin debug missing files
           fileEntry.checkedPaths = candidates;
+        } else {
+          fileEntry.checkedStorage = checkedStorage;
         }
 
         files.push(fileEntry);
@@ -109,6 +120,21 @@ export const downloadVehicleFilesZip = async (req, res) => {
 
     for (const v of vehicles) {
       if (v.annualInspectionFile && v.annualInspectionFile.filename) {
+        // Prefer GridFS if available
+        if (v.annualInspectionFile && v.annualInspectionFile.gridFsId) {
+          try {
+            const bucket = new mongoose.mongo.GridFSBucket((mongoose.connection && mongoose.connection.db) || null, { bucketName: v.annualInspectionFile.bucketName || 'fs' });
+            const objectId = typeof v.annualInspectionFile.gridFsId === 'string' ? new mongoose.Types.ObjectId(v.annualInspectionFile.gridFsId) : v.annualInspectionFile.gridFsId;
+            const name = `${v.cabNumber || v._id}-${v.annualInspectionFile.originalName || v.annualInspectionFile.filename}`;
+            const stream = bucket.openDownloadStream(objectId);
+            archive.append(stream, { name });
+            continue; // appended from GridFS, skip disk check
+          } catch (err) {
+            // fallback to disk below
+            console.warn('Failed to append GridFS file to archive, falling back to disk:', err && err.message ? err.message : err);
+          }
+        }
+
         const filePath = path.join(config.uploads.vehiclesDir, v.annualInspectionFile.filename);
         if (fs.existsSync(filePath)) {
           const name = `${v.cabNumber || v._id}-${v.annualInspectionFile.originalName || v.annualInspectionFile.filename}`;

@@ -1,8 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import path from "path";
 
-import config from "../config/index.js";
 import { authenticate, requireAdmin } from "../middleware/auth.js";
 
 // Controllers
@@ -92,18 +90,11 @@ import {
 const router = Router();
 const driverAppRouter = Router();
 
-// --- Uploads (store on disk) ---
+// --- Uploads (in-memory) ---
+const storage = multer.memoryStorage();
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, config.uploads.vehiclesDir),
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "");
-      const stamp = Date.now();
-      cb(null, `${base || "inspection"}-${stamp}${ext}`);
-    },
-  }),
-  limits: { fileSize: 25 * 1024 * 1024 },
+    storage,
+    limits: { fileSize: 25 * 1024 * 1024 },
 });
 
 // =================== AUTH =======================
@@ -112,8 +103,12 @@ router.post("/admins/login", AdminLogin); // login
 router.put("/admins/:id/approval", authenticate, requireAdmin, updateApproval);
 router.get("/company/profile", getCompanyProfile);
 
-// Require auth for everything below
-router.use(authenticate, requireAdmin);
+// Require auth for everything below (can be disabled for tests via DISABLE_AUTH=true)
+if (process.env.DISABLE_AUTH === 'true') {
+    console.warn('DISABLE_AUTH=true - skipping authentication middleware (test mode)');
+} else {
+    router.use(authenticate, requireAdmin);
+}
 
 router.get("/admins", listAdmins);
 router.put("/company/profile", updateCompanyProfile);

@@ -1,7 +1,50 @@
 import fs from "fs/promises";
+import mongoose from 'mongoose';
 import path from "path";
 import config from "../config/index.js";
 import VehicleModel from "../models/VehicleSchema.js";
+
+// Upload a local file path or a buffer to GridFS and return the file document
+async function uploadToGridFs({ localPath, buffer, filename, contentType, bucketName = 'fs' }) {
+  const conn = mongoose.connection;
+  const bucket = new mongoose.mongo.GridFSBucket(conn.db, { bucketName });
+
+  return new Promise((resolve, reject) => {
+    let uploadStream;
+    if (buffer) {
+      uploadStream = bucket.openUploadStream(filename || 'upload', { contentType });
+      uploadStream.on('error', reject);
+      uploadStream.on('finish', (file) => resolve(file));
+      uploadStream.end(buffer);
+    } else if (localPath) {
+      const fs = require('fs');
+      uploadStream = bucket.openUploadStream(filename || require('path').basename(localPath), { contentType });
+      uploadStream.on('error', reject);
+      uploadStream.on('finish', (file) => resolve(file));
+      const rs = fs.createReadStream(localPath);
+      rs.on('error', reject);
+      rs.pipe(uploadStream);
+    } else {
+      reject(new Error('No source for upload'));
+    }
+  });
+}
+
+// Delete a GridFS file by id
+async function deleteGridFsFile(gridFsId, bucketName = 'fs') {
+  if (!gridFsId) return;
+  try {
+    const conn = mongoose.connection;
+    const bucket = new mongoose.mongo.GridFSBucket(conn.db, { bucketName });
+    const id = typeof gridFsId === 'string' ? new mongoose.Types.ObjectId(gridFsId) : gridFsId;
+    await bucket.delete(id);
+  } catch (err) {
+    // if file already gone, ignore
+    if (err && err.message && !/FileNotFound/.test(err.message)) {
+      console.warn('deleteGridFsFile error', err.message);
+    }
+  }
+}
 
 function buildFileRecord(file) {
   if (!file) return undefined;
@@ -17,12 +60,19 @@ function buildFileRecord(file) {
 async function removeOldFile(record) {
   if (!record?.filename) return;
   try {
-    const fullPath = path.join(config.uploads.vehiclesDir, record.filename);
-    await fs.unlink(fullPath);
-  } catch (err) {
-    if (err.code !== "ENOENT") {
-      console.warn("Failed to remove old inspection file", err.message);
+    // If the record has a GridFS id, delete from GridFS
+    if (record.gridFsId) {
+      await deleteGridFsFile(record.gridFsId, record.bucketName || 'fs');
     }
+    // Also attempt to delete any local file (if present)
+    if (record.filename) {
+      const fullPath = path.join(config.uploads.vehiclesDir, record.filename);
+      await fs.unlink(fullPath).catch((err) => {
+        if (err.code !== 'ENOENT') console.warn('Failed to remove old inspection file', err.message);
+      });
+    }
+  } catch (err) {
+    console.warn('Failed to remove old inspection file', err.message || err);
   }
 }
 
@@ -62,8 +112,39 @@ export const addVehicle = async (req, res) => {
       model,
       year,
       color,
+      // temporary set, will overwrite below if we upload to GridFS
       annualInspectionFile: buildFileRecord(req.file),
     });
+
+    // If an upload was provided, upload to GridFS and update the record
+    if (req.file) {
+      try {
+        const origName = req.file.originalname || req.file.filename || 'inspection-file';
+        const mime = req.file.mimetype || 'application/octet-stream';
+        let uploaded;
+        if (req.file.path) {
+          // multer wrote to disk
+          uploaded = await uploadToGridFs({ localPath: req.file.path, filename: origName, contentType: mime });
+          // remove the local file
+          await fs.unlink(req.file.path).catch(() => {});
+        } else if (req.file.buffer) {
+          uploaded = await uploadToGridFs({ buffer: req.file.buffer, filename: origName, contentType: mime });
+        }
+        if (uploaded) {
+          vehicle.annualInspectionFile = {
+            gridFsId: uploaded._id,
+            bucketName: uploaded.bucketName || 'fs',
+            filename: uploaded.filename,
+            originalName: origName,
+            mimeType: mime,
+            size: uploaded.length,
+          };
+        }
+      } catch (err) {
+        console.error('Failed to upload inspection file to GridFS', err);
+        return res.status(500).json({ message: 'Failed to store inspection file', error: err.message });
+      }
+    }
 
     await vehicle.save();
 
@@ -173,7 +254,32 @@ export const downloadInspectionFile = async (req, res) => {
     if (!vehicle) return res.status(404).json({ message: 'Vehicle not found' });
     const record = vehicle.annualInspectionFile;
     if (!record || !record.filename) return res.status(404).json({ message: 'Inspection file not found for vehicle' });
+    // If the record references GridFS, stream from MongoDB GridFSBucket
+    if (record.gridFsId) {
+      try {
+        const conn = mongoose.connection;
+        const bucketName = record.bucketName || 'fs';
+        const bucket = new mongoose.mongo.GridFSBucket(conn.db, { bucketName });
 
+        const filename = record.originalName || record.filename || 'inspection-file';
+        const mimeType = record.mimeType || 'application/octet-stream';
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+
+        const objectId = typeof record.gridFsId === 'string' ? new mongoose.Types.ObjectId(record.gridFsId) : record.gridFsId;
+        const downloadStream = bucket.openDownloadStream(objectId);
+        downloadStream.on('error', (err) => {
+          console.error('GridFS download error', err);
+          if (!res.headersSent) res.status(500).json({ message: 'Failed to download file' });
+        });
+        return downloadStream.pipe(res);
+      } catch (err) {
+        console.error('Failed to stream from GridFS', err);
+        return res.status(500).json({ message: 'Failed to download inspection file', error: err.message });
+      }
+    }
+
+    // Fallback to disk-based storage (existing behavior)
     const fullPath = path.join(config.uploads.vehiclesDir, record.filename);
     // Use fs.promises.stat to check existence
     try {

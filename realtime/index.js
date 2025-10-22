@@ -133,6 +133,12 @@ export function emitToDriver(driverId, event, payload) {
         data: { event, payload },
       };
 
+      // If a public image URL is configured, include it in the Expo push payload.
+      // The image must be publicly accessible (https) so Expo can fetch it.
+      if (process.env.PUSH_NOTIFICATION_IMAGE_URL) {
+        message.image = process.env.PUSH_NOTIFICATION_IMAGE_URL;
+      }
+
       try {
         const res = await fetch('https://exp.host/--/api/v2/push/send', {
           method: 'POST',
