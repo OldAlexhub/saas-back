@@ -168,6 +168,8 @@ router.patch("/bookings/:id/assign", assignBooking);
 router.patch("/bookings/:id/status", changeStatus);
 router.post("/bookings/:id/cancel", cancelBooking);
 
+// Reports (legacy UI only) — no ad-hoc query route mounted
+
 // ================= DRIVER APP =================
 driverAppRouter.post("/auth/login", loginDriver);
 driverAppRouter.post("/auth/logout", authenticateDriver, logoutDriver);

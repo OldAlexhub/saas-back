@@ -68,7 +68,7 @@ export const listVehicleFiles = async (req, res) => {
           mimeType: v.annualInspectionFile.mimeType,
           size: v.annualInspectionFile.size,
           // expose an authenticated download endpoint (admins only)
-          downloadUrl: `/api/vehicles/${v._id}/inspection`,
+          downloadUrl: `/vehicles/${v._id}/inspection`,
           url: v.annualInspectionFile.url,
           available,
         };
