@@ -16,6 +16,10 @@ const CompanySchema = new mongoose.Schema(
     website: { type: String, default: "" },
       logoUrl: { type: String, default: "" },
       notes: { type: String, default: "" },
+      // List of allowed operating states (US postal codes). Used by the admin UI
+      // to indicate where the service is available. This is informational by
+      // default; enforcement (geo-fencing, routing) can be added separately.
+      allowedStates: { type: [String], default: ["FL"] },
       // Administrable dispatch settings that drive automatic assignment behavior.
       dispatchSettings: {
         maxDistanceMiles: { type: Number, default: 6 }, // used as an upper clamp for radial searches
