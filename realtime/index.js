@@ -158,43 +158,14 @@ export function emitToDriver(driverId, event, payload) {
         return;
       }
 
-      // FCM path: if a server key is configured, send via FCM legacy endpoint to
-      // support native Firebase tokens (Android/iOS when using native Firebase).
-      const fcmKey = process.env.FCM_SERVER_KEY || process.env.FIREBASE_SERVER_KEY;
-      if (typeof pushToken === 'string' && fcmKey) {
-        const fcmPayload = {
-          to: pushToken,
-          notification: {
-            title,
-            body,
-            // optional: sound and click_action can be added by the client config
-            sound: 'default',
-          },
-          data: { event, payload },
-        };
-
-        try {
-          const res = await fetch('https://fcm.googleapis.com/fcm/send', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `key=${fcmKey}`,
-            },
-            body: JSON.stringify(fcmPayload),
-          });
-          if (!res.ok) {
-            const txt = await res.text();
-            console.warn('FCM send returned non-OK', res.status, txt);
-          }
-        } catch (err) {
-          console.warn('Error sending push to FCM', err?.message || err);
-        }
-        return;
+      // If the token wasn't an Expo token we know how to deliver to, log for
+      // diagnostics. We intentionally keep server push delivery via Expo only
+      // (no Firebase/FCM integration) to match the Expo-managed workflow.
+      if (typeof pushToken === 'string') {
+        console.warn('Unrecognized push token format for driver (non-Expo token)', driverId, pushToken?.slice?.(0, 20));
+      } else {
+        console.warn('No push token available for driver', driverId);
       }
-
-      // If we reach here, we didn't recognize the token format or have no FCM
-      // key configured. Log for diagnostics.
-      console.warn('Unrecognized push token format or missing FCM key for driver', driverId);
     } catch (err) {
       try {
         // best-effort logging
