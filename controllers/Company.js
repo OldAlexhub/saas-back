@@ -59,6 +59,16 @@ export const updateCompanyProfile = async (req, res) => {
       Object.assign(payload, dsPayload);
     }
 
+    // Optional allowedStates update (array of US postal codes)
+    if (Array.isArray(req.body.allowedStates)) {
+      const cleaned = req.body.allowedStates
+        .map((s) => (s || '').toString().trim().toUpperCase())
+        .filter((s) => s.length === 2);
+      if (cleaned.length > 0) {
+        payload.allowedStates = cleaned;
+      }
+    }
+
     if (!payload.name || payload.name.trim() === "") {
       return res.status(400).json({ message: "Company name is required." });
     }
