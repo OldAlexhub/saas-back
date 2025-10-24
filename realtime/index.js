@@ -120,44 +120,81 @@ export function emitToDriver(driverId, event, payload) {
       const driver = await DriverModel.findOne({ driverId }).select('driverApp.pushToken firstName lastName').lean();
       const pushToken = driver?.driverApp?.pushToken;
       if (!pushToken) return;
-      // Expect an Expo push token (starts with 'ExponentPushToken[')
-      if (typeof pushToken !== 'string' || !pushToken.startsWith('ExponentPushToken[')) return;
 
       const title = payload?.pickupAddress ? `New dispatch: ${payload.pickupAddress}` : 'New dispatch';
       const body = payload?.dropoffAddress ? `Drop-off: ${payload.dropoffAddress}` : 'Tap to view assignment';
-      const message = {
-        to: pushToken,
-        sound: 'default',
-        title,
-        body,
-        data: { event, payload },
-      };
 
-      // If a public image URL is configured, include it in the Expo push payload.
-      // The image must be publicly accessible (https) so Expo can fetch it.
-      if (process.env.PUSH_NOTIFICATION_IMAGE_URL) {
-        message.image = process.env.PUSH_NOTIFICATION_IMAGE_URL;
-      }
-
-      try {
-        const res = await fetch('https://exp.host/--/api/v2/push/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(message),
-        });
-        if (!res.ok) {
-          const txt = await res.text();
-          console.warn('Expo push API returned non-OK', res.status, txt);
-        } else {
-          // optionally inspect response body for errors
-          const json = await res.json().catch(() => null);
-          if (json && json.errors) {
-            console.warn('Expo push API errors', json.errors);
-          }
+      // Expo token path (legacy Expo push service)
+      if (typeof pushToken === 'string' && pushToken.startsWith('ExponentPushToken[')) {
+        const message = {
+          to: pushToken,
+          sound: 'default',
+          title,
+          body,
+          data: { event, payload },
+        };
+        if (process.env.PUSH_NOTIFICATION_IMAGE_URL) {
+          message.image = process.env.PUSH_NOTIFICATION_IMAGE_URL;
         }
-      } catch (err) {
-        console.warn('Error sending push to Expo API', err?.message || err);
+
+        try {
+          const res = await fetch('https://exp.host/--/api/v2/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(message),
+          });
+          if (!res.ok) {
+            const txt = await res.text();
+            console.warn('Expo push API returned non-OK', res.status, txt);
+          } else {
+            const json = await res.json().catch(() => null);
+            if (json && json.errors) {
+              console.warn('Expo push API errors', json.errors);
+            }
+          }
+        } catch (err) {
+          console.warn('Error sending push to Expo API', err?.message || err);
+        }
+        return;
       }
+
+      // FCM path: if a server key is configured, send via FCM legacy endpoint to
+      // support native Firebase tokens (Android/iOS when using native Firebase).
+      const fcmKey = process.env.FCM_SERVER_KEY || process.env.FIREBASE_SERVER_KEY;
+      if (typeof pushToken === 'string' && fcmKey) {
+        const fcmPayload = {
+          to: pushToken,
+          notification: {
+            title,
+            body,
+            // optional: sound and click_action can be added by the client config
+            sound: 'default',
+          },
+          data: { event, payload },
+        };
+
+        try {
+          const res = await fetch('https://fcm.googleapis.com/fcm/send', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `key=${fcmKey}`,
+            },
+            body: JSON.stringify(fcmPayload),
+          });
+          if (!res.ok) {
+            const txt = await res.text();
+            console.warn('FCM send returned non-OK', res.status, txt);
+          }
+        } catch (err) {
+          console.warn('Error sending push to FCM', err?.message || err);
+        }
+        return;
+      }
+
+      // If we reach here, we didn't recognize the token format or have no FCM
+      // key configured. Log for diagnostics.
+      console.warn('Unrecognized push token format or missing FCM key for driver', driverId);
     } catch (err) {
       try {
         // best-effort logging
