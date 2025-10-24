@@ -1,5 +1,6 @@
 // controllers/activeController.js
 import ActiveModel from "../models/ActiveSchema.js";
+import { COMPANY_ID, CompanyModel } from "../models/CompanySchema.js";
 import DriverModel from "../models/DriverSchema.js";
 import VehicleModel from "../models/VehicleSchema.js";
 import { diffChanges } from "../utils/diff.js";
@@ -379,15 +380,37 @@ export const getAllActives = async (req, res) => {
     if (status) query.status = status;
     if (availability) query.availability = availability;
 
-    // If location & radius provided → add proximity filter
+    // If location & radius provided → add proximity filter. Clamp any client
+    // provided radius to the company-configured maxDistanceMiles to ensure the
+    // search respects company dispatch settings (defense in depth).
     if (lat && lng && radius) {
+      const requested = Number.parseFloat(radius);
+      // Load company dispatch settings (best-effort). If unavailable, fall
+      // back to a sensible default (6 miles ≈ 9656 m).
+      let maxDistanceMeters = Math.round(6 * 1609.34);
+      try {
+        const company = await CompanyModel.findById(COMPANY_ID).lean();
+        const configuredMiles = company?.dispatchSettings?.maxDistanceMiles;
+        if (Number.isFinite(Number(configuredMiles))) {
+          maxDistanceMeters = Math.round(Number(configuredMiles) * 1609.34);
+        }
+      } catch (_e) {
+        // ignore and use default
+      }
+
+      const usedRadius = Number.isFinite(requested) ? Math.min(requested, maxDistanceMeters) : maxDistanceMeters;
+      if (Number.isFinite(requested) && usedRadius < requested) {
+        // eslint-disable-next-line no-console
+        console.debug(`Clamped requested radius ${requested}m to company max ${maxDistanceMeters}m`);
+      }
+
       query.currentLocation = {
         $near: {
           $geometry: {
             type: "Point",
             coordinates: [parseFloat(lng), parseFloat(lat)],
           },
-          $maxDistance: parseFloat(radius), // in meters
+          $maxDistance: usedRadius, // in meters (clamped)
         },
       };
     }
