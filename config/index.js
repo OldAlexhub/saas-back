@@ -6,11 +6,17 @@ dotenv.config();
 
 const requiredKeys = ["MONGO_URL", "SECRET_WORD", "MAPBOX_ACCESS_TOKEN"];
 const missing = requiredKeys.filter((key) => !process.env[key] || process.env[key].trim() === "");
+// In production we require these keys. In development/test, warn instead so local
+// startup and CI runs can proceed without a full production env configured.
 if (missing.length > 0) {
-  throw new Error(
-    `Missing required environment variables: ${missing.join(", ")}. ` +
-      "Please define them in your environment or .env file before starting the server."
-  );
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      `Missing required environment variables: ${missing.join(", ")}. ` +
+        "Please define them in your environment or .env file before starting the server."
+    );
+  } else {
+    console.warn(`Warning: missing environment variables: ${missing.join(', ')}. Continuing in non-production mode.`);
+  }
 }
 
 const rootDir = process.cwd();

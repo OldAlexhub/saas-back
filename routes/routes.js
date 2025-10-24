@@ -103,12 +103,20 @@ router.post("/admins/login", AdminLogin); // login
 router.put("/admins/:id/approval", authenticate, requireAdmin, updateApproval);
 router.get("/company/profile", getCompanyProfile);
 
-// Require auth for everything below (can be disabled for tests via DISABLE_AUTH=true)
-if (process.env.DISABLE_AUTH === 'true') {
-    console.warn('DISABLE_AUTH=true - skipping authentication middleware (test mode)');
-} else {
-    router.use(authenticate, requireAdmin);
-}
+// Require auth for everything below. We evaluate the DISABLE_AUTH flag at
+// request-time so tests can toggle authentication by setting the env var
+// before making requests (some tests set DISABLE_AUTH in beforeAll()).
+router.use((req, res, next) => {
+    if (process.env.DISABLE_AUTH === 'true' || process.env.DISABLE_AUTH === '1') {
+        // test mode: skip authentication
+        return next();
+    }
+    // Apply authentication and admin requirement
+    return authenticate(req, res, (err) => {
+        if (err) return next(err);
+        return requireAdmin(req, res, next);
+    });
+});
 
 router.get("/admins", listAdmins);
 router.put("/company/profile", updateCompanyProfile);

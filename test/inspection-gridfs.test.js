@@ -33,8 +33,8 @@ describe('inspection upload/download (GridFS)', () => {
       .field('year', '2020')
       .attach('annualInspectionFile', smallBuffer, { filename: 'test.txt', contentType: 'text/plain' });
 
-    expect(res.status).toBe(201);
-    const vehicle = res.body.vehicle;
+  expect(res.status).toBe(201);
+  const vehicle = res.body.vehicle;
     expect(vehicle).toBeDefined();
     const id = vehicle._id;
 
