@@ -1,6 +1,7 @@
 import config from "../config/index.js";
 import ActiveModel from "../models/ActiveSchema.js";
 import BookingModel from "../models/BookingSchema.js";
+import DriverDiagnosticsModel from "../models/DriverDiagnostics.js";
 import DriverHOSModel from "../models/DriverHOS.js";
 import DriverLocationTimelineModel from "../models/DriverLocationTimeline.js";
 import DriverModel from "../models/DriverSchema.js";
@@ -924,6 +925,13 @@ export const updateMyBookingStatus = async (req, res) => {
 export const registerDriverPushToken = async (req, res) => {
   try {
     const { pushToken, deviceId } = req.body || {};
+    // Log token type (expo vs native) and deviceId for diagnostics. This is
+    // low-risk and helps determine whether drivers register Expo tokens or
+    // native tokens (useful when verifying notification delivery behavior).
+    try {
+      const tokenType = typeof pushToken === 'string' && pushToken.startsWith('ExponentPushToken[') ? 'expo' : 'native';
+      console.info(`registerDriverPushToken: driver=${req.driver?.driverId ?? req.driver?.id ?? 'unknown'} deviceId=${deviceId ?? 'n/a'} tokenType=${tokenType}`);
+    } catch (_e) {}
     if (!pushToken || typeof pushToken !== "string") {
       return res.status(400).json({ message: "pushToken is required." });
     }
