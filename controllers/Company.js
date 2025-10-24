@@ -59,13 +59,22 @@ export const updateCompanyProfile = async (req, res) => {
       Object.assign(payload, dsPayload);
     }
 
-    // Optional allowedStates update (array of US postal codes)
-    if (Array.isArray(req.body.allowedStates)) {
-      const cleaned = req.body.allowedStates
+    // Optional allowedStates update. The UI now selects a single state. Accept
+    // either an array or a string and persist only a single normalized 2-letter
+    // state code (stored as a one-element array to keep the schema shape).
+    if (Array.isArray(req.body.allowedStates) || typeof req.body.allowedStates === 'string') {
+      const candidates = Array.isArray(req.body.allowedStates)
+        ? req.body.allowedStates
+        : [req.body.allowedStates];
+      const cleaned = candidates
         .map((s) => (s || '').toString().trim().toUpperCase())
         .filter((s) => s.length === 2);
       if (cleaned.length > 0) {
-        payload.allowedStates = cleaned;
+        // Persist only the first valid state to enforce single-state semantics
+        payload.allowedStates = [cleaned[0]];
+      } else {
+        // If explicitly cleared, allow empty array
+        payload.allowedStates = [];
       }
     }
 
