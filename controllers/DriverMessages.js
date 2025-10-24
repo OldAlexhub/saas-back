@@ -1,5 +1,5 @@
 import DriverMessageModel from "../models/DriverMessageSchema.js";
-import { emitToAllDrivers, emitToDriver, emitToAdmins } from "../realtime/index.js";
+import { emitToAdmins, emitToAllDrivers, emitToDriver } from "../realtime/index.js";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const ONE_WEEK_MS = 7 * ONE_DAY_MS;
@@ -159,12 +159,14 @@ export const createDriverMessage = async (req, res) => {
       notes: notes?.trim() || undefined,
     });
 
-    const payload = buildAdminPayload(doc);
+  const payload = buildAdminPayload(doc);
 
-    emitToAudience(doc, payload, "message:new");
-    emitToAdmins("message:scheduled", { message: payload });
+  // Do NOT emit the scheduled message to drivers immediately. It should only
+  // be emitted when the scheduler reaches `nextRunAt`. Notify admins that
+  // the message is scheduled instead.
+  emitToAdmins("message:scheduled", { message: payload });
 
-    return res.status(201).json({ message: "Message scheduled.", driverMessage: doc });
+  return res.status(201).json({ message: "Message scheduled.", driverMessage: doc });
   } catch (error) {
     console.error("createDriverMessage error:", error);
     return res
@@ -310,5 +312,41 @@ export const deleteDriverMessage = async (req, res) => {
     return res
       .status(500)
       .json({ message: "Failed to delete driver message.", error: error.message });
+  }
+};
+
+// --- Driver-app actions ---
+export const driverAcknowledgeMessage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const driver = req.driver || { id: null };
+    // Optionally validate message exists
+    const message = await DriverMessageModel.findById(id).lean();
+    if (!message) return res.status(404).json({ message: 'Driver message not found.' });
+
+    // Notify admins that a driver acknowledged (for auditing/visibility)
+    emitToAdmins('message:acknowledged', { messageId: id, driver, at: new Date() });
+    return res.status(200).json({ message: 'Acknowledged' });
+  } catch (err) {
+    console.error('driverAcknowledgeMessage error', err);
+    return res.status(500).json({ message: 'Failed to acknowledge message.' });
+  }
+};
+
+export const driverSnoozeMessage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { minutes = 10 } = req.body || {};
+    const driver = req.driver || { id: null };
+    const message = await DriverMessageModel.findById(id).lean();
+    if (!message) return res.status(404).json({ message: 'Driver message not found.' });
+
+    const snoozeUntil = new Date(Date.now() + Math.max(1, Number(minutes) || 10) * 60 * 1000);
+    // Notify admins for visibility; clients snooze locally — server doesn't reschedule
+    emitToAdmins('message:snoozed', { messageId: id, driver, snoozeUntil });
+    return res.status(200).json({ message: 'Snoozed', snoozeUntil });
+  } catch (err) {
+    console.error('driverSnoozeMessage error', err);
+    return res.status(500).json({ message: 'Failed to snooze message.' });
   }
 };

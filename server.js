@@ -12,6 +12,19 @@ export async function start() {
   await connectTodb();
   httpServer = createHttpServer.createServer(app);
   initRealtime(httpServer);
+  try {
+    // Start background scheduler for driver messages (sends scheduled messages at their run time)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { startDriverMessageScheduler } = await import('./schedulers/driverMessageScheduler.js');
+    try {
+      startDriverMessageScheduler();
+      console.log('Driver message scheduler started');
+    } catch (err) {
+      console.warn('Failed to start driver message scheduler', err?.message || err);
+    }
+  } catch (_e) {
+    // best-effort; continue even if scheduler module fails to load
+  }
   return new Promise((resolve) => {
     httpServer.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

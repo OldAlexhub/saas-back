@@ -55,6 +55,8 @@ import { listDriverLocationTimeline } from "../controllers/DriverLocationTimelin
 import {
     createDriverMessage,
     deleteDriverMessage,
+    driverAcknowledgeMessage,
+    driverSnoozeMessage,
     listDriverMessages,
     sendDriverMessageNow,
     updateDriverMessage,
@@ -196,6 +198,9 @@ driverAppRouter.post("/bookings/:id/location", reportBookingLocation);
 driverAppRouter.post("/flagdowns", createFlagdownRide);
 driverAppRouter.patch("/presence", updatePresence);
 driverAppRouter.post("/push-token", registerDriverPushToken);
+// Driver app: allow drivers to acknowledge or snooze admin messages
+driverAppRouter.post('/messages/:id/acknowledge', driverAcknowledgeMessage);
+driverAppRouter.post('/messages/:id/snooze', driverSnoozeMessage);
 // Hours-of-service endpoints (driver POSTs deltas, admin/driver can read summary)
 driverAppRouter.post('/hos', appendHos);
 // The router used by this project doesn't accept the `?` optional
