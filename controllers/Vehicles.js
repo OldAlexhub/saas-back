@@ -262,7 +262,29 @@ export const updateVehicle = async (req, res) => {
 // Fetch all vehicles
 export const listVehicles = async (_req, res) => {
   try {
-    const vehicles = await VehicleModel.find().lean();
+    const { cabNumber, cabNumbers } = _req.query || {};
+    const query = {};
+    // Helper: build case-insensitive exact-match regex for cab numbers
+    function escapeRegex(s) {
+      return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    if (cabNumber) {
+      const key = String(cabNumber).trim();
+      if (key) query.cabNumber = { $regex: `^${escapeRegex(key)}$`, $options: 'i' };
+    } else if (cabNumbers) {
+      const list = Array.isArray(cabNumbers)
+        ? cabNumbers
+        : String(cabNumbers)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+      if (list.length) {
+        query.$or = list.map((s) => ({ cabNumber: { $regex: `^${escapeRegex(String(s).trim())}$`, $options: 'i' } }));
+      }
+    }
+
+    const vehicles = await VehicleModel.find(query).lean();
     return res.status(200).json({
       count: vehicles.length,
       vehicles,
@@ -270,6 +292,37 @@ export const listVehicles = async (_req, res) => {
   } catch (error) {
     console.error("Failed to list vehicles:", error);
     return res.status(500).json({ message: "Failed to fetch vehicles", error: error.message });
+  }
+};
+
+// Batch lookup: accept JSON body { cabNumbers: ["A1","B2"] } and return matching vehicles
+export const listVehiclesByCabs = async (req, res) => {
+  try {
+    const { cabNumbers } = req.body || {};
+    const list = Array.isArray(cabNumbers)
+      ? cabNumbers.map((s) => String(s).trim()).filter(Boolean)
+      : [];
+    if (!list.length) {
+      return res.status(400).json({ message: 'cabNumbers array is required' });
+    }
+
+    function escapeRegex(s) {
+      return s.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&');
+    }
+
+    const query = { $or: list.map((s) => ({ cabNumber: { $regex: `^${escapeRegex(String(s))}$`, $options: 'i' } })) };
+
+    const vehicles = await VehicleModel.find(query).lean();
+
+    const byCab = {};
+    for (const v of Array.isArray(vehicles) ? vehicles : []) {
+      if (v && v.cabNumber) byCab[String(v.cabNumber).trim()] = v;
+    }
+
+    return res.status(200).json({ count: vehicles.length, vehicles, byCab });
+  } catch (error) {
+    console.error('Failed to list vehicles by cabs:', error);
+    return res.status(500).json({ message: 'Failed to fetch vehicles', error: error.message });
   }
 };
 

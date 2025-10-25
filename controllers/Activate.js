@@ -127,6 +127,27 @@ export const addActive = async (req, res) => {
     payload.color = vehicleDoc.color;
     payload.cabNumber = vehicleDoc.cabNumber;
 
+    // Populate vehicle compliance snapshot on the active record
+    payload.regisExpiry = vehicleDoc.regisExpiry || null;
+    payload.annualInspection = vehicleDoc.annualInspection || null;
+    const now = new Date();
+    const complianceIssues = [];
+    // Missing dates are treated as compliance issues so UI and guards surface them
+    if (!vehicleDoc.regisExpiry) {
+      complianceIssues.push("registrationMissing");
+    } else if (new Date(vehicleDoc.regisExpiry) < now) {
+      complianceIssues.push("registrationExpired");
+    }
+    if (!vehicleDoc.annualInspection) {
+      complianceIssues.push("inspectionMissing");
+    } else if (vehicleDoc.annualInspection && new Date(vehicleDoc.annualInspection) < now) {
+      complianceIssues.push("inspectionExpired");
+    }
+    payload.vehicleCompliance = {
+      isCompliant: complianceIssues.length === 0,
+      issues: complianceIssues,
+    };
+
     // Optional duplicate guardrails (uncomment if you want to enforce uniqueness)
     // const existing = await ActiveModel.findOne({
     //   $or: [{ driverId: payload.driverId }, { cabNumber: payload.cabNumber }],
@@ -228,6 +249,25 @@ export const updateActive = async (req, res) => {
     baseUpdates.make = vehicleDoc.make;
     baseUpdates.model = vehicleDoc.model;
     baseUpdates.color = vehicleDoc.color;
+    // Keep compliance snapshot up-to-date when vehicle assignment changes
+    baseUpdates.regisExpiry = vehicleDoc.regisExpiry || null;
+    baseUpdates.annualInspection = vehicleDoc.annualInspection || null;
+    const now2 = new Date();
+    const complianceIssues2 = [];
+    if (!vehicleDoc.regisExpiry) {
+      complianceIssues2.push("registrationMissing");
+    } else if (new Date(vehicleDoc.regisExpiry) < now2) {
+      complianceIssues2.push("registrationExpired");
+    }
+    if (!vehicleDoc.annualInspection) {
+      complianceIssues2.push("inspectionMissing");
+    } else if (vehicleDoc.annualInspection && new Date(vehicleDoc.annualInspection) < now2) {
+      complianceIssues2.push("inspectionExpired");
+    }
+    baseUpdates.vehicleCompliance = {
+      isCompliant: complianceIssues2.length === 0,
+      issues: complianceIssues2,
+    };
 
     const nextState = {
       ...existing.toObject(),
@@ -296,6 +336,19 @@ export const setStatus = async (req, res) => {
           message: "Active status requires a valid driver/vehicle pairing. Resolve missing records first.",
         });
       }
+      // Enforce simple compliance checks before allowing Active status
+      const now = new Date();
+      const issues = [];
+      if (!vehicleDoc.regisExpiry) issues.push('registrationMissing');
+      else if (new Date(vehicleDoc.regisExpiry) < now) issues.push('registrationExpired');
+      if (!vehicleDoc.annualInspection) issues.push('inspectionMissing');
+      else if (vehicleDoc.annualInspection && new Date(vehicleDoc.annualInspection) < now) issues.push('inspectionExpired');
+      if (issues.length > 0) {
+        return res.status(400).json({
+          message: "Vehicle compliance check failed. Resolve vehicle registration/inspection issues before activating.",
+          issues,
+        });
+      }
     }
 
     const prev = existing.status;
@@ -345,6 +398,19 @@ export const setAvailability = async (req, res) => {
       if (!driverDoc || !vehicleDoc) {
         return res.status(400).json({
           message: "Valid driver and vehicle records are required before going Online.",
+        });
+      }
+      // Enforce vehicle compliance before allowing Online availability
+      const now3 = new Date();
+      const issues3 = [];
+      if (!vehicleDoc.regisExpiry) issues3.push('registrationMissing');
+      else if (new Date(vehicleDoc.regisExpiry) < now3) issues3.push('registrationExpired');
+      if (!vehicleDoc.annualInspection) issues3.push('inspectionMissing');
+      else if (vehicleDoc.annualInspection && new Date(vehicleDoc.annualInspection) < now3) issues3.push('inspectionExpired');
+      if (issues3.length > 0) {
+        return res.status(400).json({
+          message: "Vehicle compliance check failed. Resolve vehicle registration/inspection issues before going Online.",
+          issues: issues3,
         });
       }
     }

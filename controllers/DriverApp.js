@@ -1,7 +1,9 @@
 import config from "../config/index.js";
 import ActiveModel from "../models/ActiveSchema.js";
 import BookingModel from "../models/BookingSchema.js";
+import { COMPANY_ID, CompanyModel } from "../models/CompanySchema.js";
 import DriverDiagnosticsModel from "../models/DriverDiagnostics.js";
+import DriverDutyModel from "../models/DriverDuty.js";
 import DriverHOSModel from "../models/DriverHOS.js";
 import DriverLocationTimelineModel from "../models/DriverLocationTimeline.js";
 import DriverModel from "../models/DriverSchema.js";
@@ -1115,6 +1117,217 @@ export const getHosSummary = async (req, res) => {
   } catch (err) {
     console.error('getHosSummary error', err);
     return res.status(500).json({ message: 'Failed to fetch HOS summary' });
+  }
+};
+
+// Helper: load HOS settings (company-level) with safe defaults
+async function loadHosSettings() {
+  try {
+    const company = await CompanyModel.findById(COMPANY_ID).lean();
+    const s = (company && company.hosSettings) || {};
+    return {
+      MAX_ON_DUTY_HOURS: Number(s.MAX_ON_DUTY_HOURS ?? 12),
+      REQUIRED_OFF_DUTY_HOURS: Number(s.REQUIRED_OFF_DUTY_HOURS ?? 12),
+      LOOKBACK_WINDOW_HOURS: Number(s.LOOKBACK_WINDOW_HOURS ?? 24),
+      RECORD_RETENTION_MONTHS: Number(s.RECORD_RETENTION_MONTHS ?? 12),
+      ALLOW_ALTERNATE_RULES: Boolean(s.ALLOW_ALTERNATE_RULES ?? false),
+      ALERT_THRESHOLD_HOURS: Number(s.ALERT_THRESHOLD_HOURS ?? 11.5),
+    };
+  } catch (err) {
+    console.warn('loadHosSettings error', err && err.message ? err.message : err);
+    return {
+      MAX_ON_DUTY_HOURS: 12,
+      REQUIRED_OFF_DUTY_HOURS: 12,
+      LOOKBACK_WINDOW_HOURS: 24,
+      RECORD_RETENTION_MONTHS: 12,
+      ALLOW_ALTERNATE_RULES: false,
+      ALERT_THRESHOLD_HOURS: 11.5,
+    };
+  }
+}
+
+// Compute total on-duty minutes in a rolling window (hours) ending at `at` (defaults to now)
+async function computeOnDutyMinutesInWindow(driverId, windowHours, at = new Date()) {
+  const windowMs = windowHours * 3600 * 1000;
+  const windowStart = new Date(at.getTime() - windowMs);
+
+  const duties = await DriverDutyModel.find({
+    driverId,
+    $or: [
+      { endAt: { $exists: false } },
+      { endAt: null },
+      { endAt: { $gte: windowStart } },
+    ],
+  }).lean();
+
+  let totalMs = 0;
+  for (const d of duties) {
+    const s = new Date(d.startAt);
+    const e = d.endAt ? new Date(d.endAt) : at;
+    const overlapStart = s < windowStart ? windowStart : s;
+    const overlapEnd = e > at ? at : e;
+    if (overlapEnd > overlapStart) {
+      totalMs += overlapEnd - overlapStart;
+    }
+  }
+  return Math.round(totalMs / 60000); // minutes
+}
+
+// Prevent starting duty if required off-duty hours not observed
+async function checkOffDutyRequirement(driverId, requiredOffHours) {
+  // get last duty record
+  const last = await DriverDutyModel.findOne({ driverId }).sort({ startAt: -1 }).lean();
+  if (!last) return { ok: true };
+  if (!last.endAt) return { ok: false, reason: 'driver_currently_on_duty' };
+  const offMs = Date.now() - new Date(last.endAt).getTime();
+  const offHours = offMs / (3600 * 1000);
+  if (offHours < requiredOffHours) {
+    return { ok: false, reason: 'insufficient_off_duty', offHours, requiredOffHours };
+  }
+  return { ok: true };
+}
+
+// Emit a HOS alert to admins and record violation on Active record
+async function emitHosAlert(driverId, rule, note) {
+  try {
+    const payload = { driverId, rule, note, occurredAt: new Date() };
+    emitToAdmins('hos:alert', payload);
+    // persist on Active record
+    try {
+      await ActiveModel.updateOne({ driverId }, { $push: { 'hoursOfService.violations': payload } });
+    } catch (err) {
+      console.warn('Failed to persist HOS violation on Active record', err && err.message ? err.message : err);
+    }
+  } catch (err) {
+    console.warn('emitHosAlert error', err && err.message ? err.message : err);
+  }
+}
+
+// POST /driver-app/hos/start
+export const startDuty = async (req, res) => {
+  try {
+    const driverId = req.driver.driverId;
+    const now = new Date();
+
+    const settings = await loadHosSettings();
+    const check = await checkOffDutyRequirement(driverId, settings.REQUIRED_OFF_DUTY_HOURS);
+    if (!check.ok) {
+      if (check.reason === 'driver_currently_on_duty') {
+        return res.status(409).json({ message: 'Driver is already recorded on duty.' });
+      }
+      return res.status(409).json({ message: `Insufficient off-duty time. Off hours: ${Number(check.offHours || 0).toFixed(2)} required: ${settings.REQUIRED_OFF_DUTY_HOURS}` });
+    }
+
+    // create duty record
+    const duty = await DriverDutyModel.create({ driverId, startAt: now, source: 'driverApp' });
+
+    // set roster dutyStart
+    try {
+      await ActiveModel.updateOne({ driverId }, { $set: { 'hoursOfService.dutyStart': now } });
+    } catch (err) {
+      console.warn('Failed to update Active.hoursOfService.dutyStart', err && err.message ? err.message : err);
+    }
+
+    // compute rolling on-duty
+    const minutes = await computeOnDutyMinutesInWindow(driverId, settings.LOOKBACK_WINDOW_HOURS, now);
+    const hours = minutes / 60;
+    if (hours >= settings.ALERT_THRESHOLD_HOURS) {
+      await emitHosAlert(driverId, 'DailyOnDutyThreshold', `On-duty hours in last ${settings.LOOKBACK_WINDOW_HOURS}h = ${hours.toFixed(2)}`);
+    }
+
+    return res.status(201).json({ message: 'On-duty started', dutyId: duty._id, startedAt: now, rollingOnDutyMinutes: minutes });
+  } catch (err) {
+    console.error('startDuty error', err);
+    return res.status(500).json({ message: 'Failed to start duty' });
+  }
+};
+
+// POST /driver-app/hos/end
+export const endDuty = async (req, res) => {
+  try {
+    const driverId = req.driver.driverId;
+    const now = new Date();
+
+    // find open duty
+    const duty = await DriverDutyModel.findOne({ driverId, endAt: { $exists: false } }).sort({ startAt: -1 });
+    if (!duty) {
+      // It may be that endAt is null or not set; also check for explicit null
+      const dutyNull = await DriverDutyModel.findOne({ driverId, endAt: null }).sort({ startAt: -1 });
+      if (!dutyNull) return res.status(400).json({ message: 'No active on-duty record found.' });
+    }
+    const open = duty || await DriverDutyModel.findOne({ driverId, endAt: null }).sort({ startAt: -1 });
+    if (!open) return res.status(400).json({ message: 'No active on-duty record found.' });
+
+    open.endAt = now;
+    await open.save();
+
+    // update Active.hoursOfService.dutyStart -> clear
+    try {
+      await ActiveModel.updateOne({ driverId }, { $unset: { 'hoursOfService.dutyStart': '' } });
+    } catch (err) {
+      console.warn('Failed to clear Active.hoursOfService.dutyStart', err && err.message ? err.message : err);
+    }
+
+    // compute minutes and append to DriverHOSModel split by day
+    try {
+      const start = new Date(open.startAt);
+      const end = new Date(open.endAt);
+      // split across UTC date boundaries
+      let cursor = new Date(start);
+      while (cursor < end) {
+        const dayStart = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate()));
+        const nextDay = new Date(dayStart.getTime() + 24 * 3600 * 1000);
+        const segStart = cursor;
+        const segEnd = end < nextDay ? end : nextDay;
+        const mins = Math.round((segEnd - segStart) / 60000);
+        const y = segStart.getUTCFullYear();
+        const m = String(segStart.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(segStart.getUTCDate()).padStart(2, '0');
+        const dateStr = `${y}-${m}-${d}`;
+        if (mins > 0) {
+          await DriverHOSModel.create({ driverId, date: dateStr, minutes: mins });
+          // increment cumulative counters on Active record
+          await ActiveModel.updateOne({ driverId }, { $inc: { cumulativeOnDutyMinutes: mins, cumulativeDrivingMinutes: mins }, $set: { cumulativeUpdatedAt: new Date() } });
+        }
+        cursor = segEnd;
+      }
+    } catch (err) {
+      console.warn('Failed to split duty into HOS deltas', err && err.message ? err.message : err);
+    }
+
+    // compute rolling and alert if needed
+    try {
+      const settings = await loadHosSettings();
+      const minutes = await computeOnDutyMinutesInWindow(driverId, settings.LOOKBACK_WINDOW_HOURS, now);
+      const hours = minutes / 60;
+      if (hours >= settings.MAX_ON_DUTY_HOURS) {
+        await emitHosAlert(driverId, 'DailyOnDutyLimitExceeded', `On-duty hours in last ${settings.LOOKBACK_WINDOW_HOURS}h = ${hours.toFixed(2)} (limit ${settings.MAX_ON_DUTY_HOURS})`);
+      } else if (hours >= settings.ALERT_THRESHOLD_HOURS) {
+        await emitHosAlert(driverId, 'DailyOnDutyWarning', `Approaching on-duty limit: ${hours.toFixed(2)}h`);
+      }
+    } catch (err) {
+      console.warn('Failed to compute post-end rolling HOS', err && err.message ? err.message : err);
+    }
+
+    return res.status(200).json({ message: 'On-duty ended', dutyId: open._id, endedAt: now });
+  } catch (err) {
+    console.error('endDuty error', err);
+    return res.status(500).json({ message: 'Failed to end duty' });
+  }
+};
+
+// GET /driver-app/hos/logs
+export const getDutyLogs = async (req, res) => {
+  try {
+    const driverId = req.params.driverId || req.driver.driverId;
+    const months = Math.max(1, Math.min(36, Number(req.query.months || 12)));
+    const since = new Date();
+    since.setMonth(since.getMonth() - months);
+    const rows = await DriverDutyModel.find({ driverId, startAt: { $gte: since } }).sort({ startAt: -1 }).lean();
+    return res.status(200).json({ count: rows.length, duties: rows });
+  } catch (err) {
+    console.error('getDutyLogs error', err);
+    return res.status(500).json({ message: 'Failed to fetch duty logs' });
   }
 };
 

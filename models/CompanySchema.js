@@ -27,6 +27,19 @@ const CompanySchema = new mongoose.Schema(
         // distance search steps in miles (e.g. [1,2,3,4,5,6])
         distanceStepsMiles: { type: [Number], default: [1, 2, 3, 4, 5, 6] },
       },
+      // Hours-of-Service (HOS) settings. Admins may update these values to
+      // reflect local PUC rules. Defaults are conservative and may be
+      // overridden by env or via the company profile update API.
+      hosSettings: {
+        MAX_ON_DUTY_HOURS: { type: Number, default: 12 },
+        REQUIRED_OFF_DUTY_HOURS: { type: Number, default: 12 },
+        LOOKBACK_WINDOW_HOURS: { type: Number, default: 24 },
+        // retention in months for raw duty records. NOTE: core requirement
+        // requested >= 12 months; default set to 12 to ensure compliance.
+        RECORD_RETENTION_MONTHS: { type: Number, default: 12 },
+        ALLOW_ALTERNATE_RULES: { type: Boolean, default: false },
+        ALERT_THRESHOLD_HOURS: { type: Number, default: 11.5 },
+      },
   },
   { timestamps: true, versionKey: false }
 );

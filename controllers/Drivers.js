@@ -88,7 +88,17 @@ export const listDrivers = async (_req, res) => {
 export const getDriverById = async (req, res) => {
   try {
     const { id } = req.params;
-    const driver = await DriverModel.findById(id).select("-ssn -history");
+    let driver = null;
+    // support both Mongo ObjectId and the app's generated driverId (5-digit string)
+    if (id && /^[0-9a-fA-F]{24}$/.test(String(id))) {
+      driver = await DriverModel.findById(id).select("-ssn -history");
+    }
+    if (!driver) {
+      const candidateDriverId = String(id || "").trim();
+      driver =
+        candidateDriverId &&
+        (await DriverModel.findOne({ driverId: candidateDriverId }).select("-ssn -history"));
+    }
     if (!driver) {
       return res.status(404).json({ message: "Driver not found." });
     }
@@ -189,8 +199,8 @@ export const addDriver = async (req, res) => {
 // ----------------- UPDATE RECORD -----------------
 export const updateDriver = async (req, res) => {
   try {
-    const { id } = req.params;
-    const updateData = { ...req.body };
+  const { id } = req.params;
+  const updateData = { ...req.body };
 
     // Prevent manual driverId override
     if (updateData.driverId) {
@@ -215,11 +225,25 @@ export const updateDriver = async (req, res) => {
       updateData.email = String(updateData.email).trim().toLowerCase();
     }
 
-    const updatedDriver = await DriverModel.findByIdAndUpdate(
-      id,
-      { $set: updateData },
-      { new: true, runValidators: true, updatedBy: req.user?.email || "admin" }
-    ).select("-ssn -history");
+    // Support updates by either Mongo ObjectId or the app's driverId
+    let updatedDriver = null;
+    if (id && /^[0-9a-fA-F]{24}$/.test(String(id))) {
+      updatedDriver = await DriverModel.findByIdAndUpdate(
+        id,
+        { $set: updateData },
+        { new: true, runValidators: true, updatedBy: req.user?.email || "admin" }
+      ).select("-ssn -history");
+    }
+    if (!updatedDriver) {
+      const candidateDriverId = String(id || "").trim();
+      if (candidateDriverId) {
+        updatedDriver = await DriverModel.findOneAndUpdate(
+          { driverId: candidateDriverId },
+          { $set: updateData },
+          { new: true, runValidators: true, updatedBy: req.user?.email || "admin" }
+        ).select("-ssn -history");
+      }
+    }
 
     if (!updatedDriver) {
       return res.status(404).json({ message: "Driver not found." });

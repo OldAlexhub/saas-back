@@ -18,6 +18,14 @@ export const getCompanyProfile = async (_req, res) => {
             maxCandidates: 20,
             distanceStepsMiles: [1, 2, 3, 4, 5, 6],
           },
+            hosSettings: {
+              MAX_ON_DUTY_HOURS: 12,
+              REQUIRED_OFF_DUTY_HOURS: 12,
+              LOOKBACK_WINDOW_HOURS: 24,
+              RECORD_RETENTION_MONTHS: 12,
+              ALLOW_ALTERNATE_RULES: false,
+              ALERT_THRESHOLD_HOURS: 11.5,
+            },
         });
       company = company.toObject();
     }
@@ -57,6 +65,19 @@ export const updateCompanyProfile = async (req, res) => {
       if (ds.maxCandidates !== undefined) dsPayload['dispatchSettings.maxCandidates'] = Number(ds.maxCandidates);
       if (Array.isArray(ds.distanceStepsMiles)) dsPayload['dispatchSettings.distanceStepsMiles'] = ds.distanceStepsMiles.map(Number).filter((n) => Number.isFinite(n) && n > 0);
       Object.assign(payload, dsPayload);
+    }
+
+    // Optional HOS settings update
+    if (req.body.hosSettings && typeof req.body.hosSettings === 'object') {
+      const h = req.body.hosSettings;
+      const hsPayload = {};
+      if (h.MAX_ON_DUTY_HOURS !== undefined) hsPayload['hosSettings.MAX_ON_DUTY_HOURS'] = Number(h.MAX_ON_DUTY_HOURS);
+      if (h.REQUIRED_OFF_DUTY_HOURS !== undefined) hsPayload['hosSettings.REQUIRED_OFF_DUTY_HOURS'] = Number(h.REQUIRED_OFF_DUTY_HOURS);
+      if (h.LOOKBACK_WINDOW_HOURS !== undefined) hsPayload['hosSettings.LOOKBACK_WINDOW_HOURS'] = Number(h.LOOKBACK_WINDOW_HOURS);
+      if (h.RECORD_RETENTION_MONTHS !== undefined) hsPayload['hosSettings.RECORD_RETENTION_MONTHS'] = Number(h.RECORD_RETENTION_MONTHS);
+      if (h.ALLOW_ALTERNATE_RULES !== undefined) hsPayload['hosSettings.ALLOW_ALTERNATE_RULES'] = Boolean(h.ALLOW_ALTERNATE_RULES);
+      if (h.ALERT_THRESHOLD_HOURS !== undefined) hsPayload['hosSettings.ALERT_THRESHOLD_HOURS'] = Number(h.ALERT_THRESHOLD_HOURS);
+      Object.assign(payload, hsPayload);
     }
 
     // Optional allowedStates update. The UI now selects a single state. Accept

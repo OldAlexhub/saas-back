@@ -60,6 +60,18 @@ const config = {
       return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
     })(),
   },
+  // Optional server-level HOS defaults (can be overridden per-company)
+  hos: {
+    MAX_ON_DUTY_HOURS: Number(process.env.HOS_MAX_ON_DUTY_HOURS || 12),
+    REQUIRED_OFF_DUTY_HOURS: Number(process.env.HOS_REQUIRED_OFF_DUTY_HOURS || 12),
+    LOOKBACK_WINDOW_HOURS: Number(process.env.HOS_LOOKBACK_WINDOW_HOURS || 24),
+    RECORD_RETENTION_MONTHS: Number(process.env.HOS_RECORD_RETENTION_MONTHS || 12),
+    ALLOW_ALTERNATE_RULES:
+      process.env.HOS_ALLOW_ALTERNATE_RULES === 'true' || process.env.HOS_ALLOW_ALTERNATE_RULES === '1'
+        ? true
+        : false,
+    ALERT_THRESHOLD_HOURS: Number(process.env.HOS_ALERT_THRESHOLD_HOURS || 11.5),
+  },
 };
 
 export default config;

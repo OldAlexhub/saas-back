@@ -40,6 +40,13 @@ const ActiveSchema = new mongoose.Schema({
   make:       { type: String },
   model:      { type: String },
   color:      { type: String },
+  // Snapshot of key vehicle compliance fields for quick checks on the roster
+  regisExpiry: { type: Date },
+  annualInspection: { type: Date },
+  vehicleCompliance: {
+    isCompliant: { type: Boolean, default: true },
+    issues: { type: [String], default: [] },
+  },
 
   // Operational status (assignment/roster state)
   status: {

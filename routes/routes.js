@@ -81,13 +81,17 @@ import {
     downloadInspectionFile,
     getVehicle,
     listVehicles,
+    listVehiclesByCabs,
     updateVehicle,
 } from "../controllers/Vehicles.js";
 import { authenticateDriver } from "../middleware/driverAuth.js";
 
 import {
     appendHos,
+    endDuty,
+    getDutyLogs,
     getHosSummary,
+    startDuty,
 } from "../controllers/DriverApp.js";
 const router = Router();
 const driverAppRouter = Router();
@@ -142,6 +146,7 @@ router.patch("/drivers/:id/app-credentials", setDriverAppCredentials);
 // =================== VEHICLES =================
 router.get("/vehicles", listVehicles);
 router.post("/vehicles", upload.single("annualInspectionFile"), addVehicle);
+router.post("/vehicles/by-cabs", listVehiclesByCabs);
 router.get("/vehicles/:id", getVehicle);
 // Authenticated download of a vehicle's inspection file (admins only)
 router.get("/vehicles/:id/inspection", authenticate, requireAdmin, downloadInspectionFile);
@@ -203,11 +208,17 @@ driverAppRouter.post('/messages/:id/acknowledge', driverAcknowledgeMessage);
 driverAppRouter.post('/messages/:id/snooze', driverSnoozeMessage);
 // Hours-of-service endpoints (driver POSTs deltas, admin/driver can read summary)
 driverAppRouter.post('/hos', appendHos);
+// Start/End duty records (HOS enforcement)
+driverAppRouter.post('/hos/start', startDuty);
+driverAppRouter.post('/hos/end', endDuty);
 // The router used by this project doesn't accept the `?` optional
 // parameter syntax in route patterns. Register two explicit routes
 // instead: one for the collection and one for a specific driver id.
 driverAppRouter.get('/hos', getHosSummary);
 driverAppRouter.get('/hos/:driverId', getHosSummary);
+// Duty logs (recent months)
+driverAppRouter.get('/hos/logs', getDutyLogs);
+driverAppRouter.get('/hos/logs/:driverId', getDutyLogs);
 // Upload diagnostics from driver app (requires driver auth)
 driverAppRouter.post('/diagnostics', async (req, res) => {
     // Delegate to controller implementation inside DriverApp.js to keep auth/context consistent
