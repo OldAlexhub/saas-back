@@ -25,6 +25,19 @@ export async function start() {
   } catch (_e) {
     // best-effort; continue even if scheduler module fails to load
   }
+  try {
+    // Start HOS retention scheduler (daily cleanup of old HOS records)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { startHosRetentionScheduler } = await import('./schedulers/hosRetentionScheduler.js');
+    try {
+      startHosRetentionScheduler();
+      console.log('HOS retention scheduler started');
+    } catch (err) {
+      console.warn('Failed to start HOS retention scheduler', err?.message || err);
+    }
+  } catch (_e) {
+    // best-effort; continue even if scheduler module fails to load
+  }
   return new Promise((resolve) => {
     httpServer.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

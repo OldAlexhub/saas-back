@@ -1192,6 +1192,12 @@ async function emitHosAlert(driverId, rule, note) {
   try {
     const payload = { driverId, rule, note, occurredAt: new Date() };
     emitToAdmins('hos:alert', payload);
+    // also notify the driver in real-time when connected
+    try {
+      emitToDriver(driverId, 'hos:alert', payload);
+    } catch (drvErr) {
+      console.warn('Failed to emit HOS alert to driver socket', drvErr && drvErr.message ? drvErr.message : drvErr);
+    }
     // persist on Active record
     try {
       await ActiveModel.updateOne({ driverId }, { $push: { 'hoursOfService.violations': payload } });
