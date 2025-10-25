@@ -93,6 +93,7 @@ import {
     getHosSummary,
     startDuty,
 } from "../controllers/DriverApp.js";
+import reportsRouter from './reports.js';
 const router = Router();
 const driverAppRouter = Router();
 
@@ -184,6 +185,8 @@ router.patch("/bookings/:id/status", changeStatus);
 router.post("/bookings/:id/cancel", cancelBooking);
 
 // Reports (legacy UI only) — no ad-hoc query route mounted
+// Mount legacy reports router so endpoints like /api/reports/income-per-driver are available
+router.use('/reports', reportsRouter);
 
 // ================= DRIVER APP =================
 driverAppRouter.post("/auth/login", loginDriver);
