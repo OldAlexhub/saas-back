@@ -1846,7 +1846,7 @@ async function loadHosSettings() {
     const s = (company && company.hosSettings) || {};
     return {
       MAX_ON_DUTY_HOURS: Number(s.MAX_ON_DUTY_HOURS ?? 12),
-      REQUIRED_OFF_DUTY_HOURS: Number(s.REQUIRED_OFF_DUTY_HOURS ?? 12),
+      REQUIRED_OFF_DUTY_HOURS: Number(s.REQUIRED_OFF_DUTY_HOURS ?? 0),
       LOOKBACK_WINDOW_HOURS: Number(s.LOOKBACK_WINDOW_HOURS ?? 24),
       RECORD_RETENTION_MONTHS: Number(s.RECORD_RETENTION_MONTHS ?? 12),
       ALLOW_ALTERNATE_RULES: Boolean(s.ALLOW_ALTERNATE_RULES ?? false),
@@ -1856,7 +1856,7 @@ async function loadHosSettings() {
     console.warn('loadHosSettings error', err && err.message ? err.message : err);
     return {
       MAX_ON_DUTY_HOURS: 12,
-      REQUIRED_OFF_DUTY_HOURS: 12,
+      REQUIRED_OFF_DUTY_HOURS: 0,
       LOOKBACK_WINDOW_HOURS: 24,
       RECORD_RETENTION_MONTHS: 12,
       ALLOW_ALTERNATE_RULES: false,
@@ -1935,7 +1935,9 @@ export const startDuty = async (req, res) => {
     const now = new Date();
 
     const settings = await loadHosSettings();
-    const check = await checkOffDutyRequirement(driverId, settings.REQUIRED_OFF_DUTY_HOURS);
+    const check = settings.REQUIRED_OFF_DUTY_HOURS > 0
+      ? await checkOffDutyRequirement(driverId, settings.REQUIRED_OFF_DUTY_HOURS)
+      : { ok: true };
     if (!check.ok) {
       if (check.reason === 'driver_currently_on_duty') {
         return res.status(409).json({ message: 'Driver is already recorded on duty.' });
