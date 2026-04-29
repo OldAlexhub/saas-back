@@ -32,10 +32,16 @@ const VehicleSchema = mongoose.Schema({
   ],
 });
 
+VehicleSchema.index({ regisExpiry: 1 });
+VehicleSchema.index({ annualInspection: 1 });
+
 VehicleSchema.pre("save", function (next) {
   if (this.year) {
     const currentYear = new Date().getFullYear();
     this.ageVehicle = currentYear - this.year;
+  }
+  if (Array.isArray(this.history) && this.history.length > 100) {
+    this.history = this.history.slice(-100);
   }
   next();
 });

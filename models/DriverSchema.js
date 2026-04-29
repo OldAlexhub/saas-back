@@ -53,17 +53,10 @@ const DriverSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Generate unique 5-digit driverId
-DriverSchema.pre("save", async function (next) {
+// Generate unique 5-digit driverId — relies on the unique index for atomicity
+DriverSchema.pre("save", function (next) {
   if (!this.driverId) {
-    let isUnique = false;
-    let newId;
-    while (!isUnique) {
-      newId = Math.floor(10000 + Math.random() * 90000).toString();
-      const existing = await mongoose.models.Driver.findOne({ driverId: newId });
-      if (!existing) isUnique = true;
-    }
-    this.driverId = newId;
+    this.driverId = Math.floor(10000 + Math.random() * 90000).toString();
   }
   next();
 });
@@ -85,20 +78,19 @@ DriverSchema.methods.verifyAppPassword = async function (candidatePassword) {
   return bcrypt.compare(String(candidatePassword), hash);
 };
 
-// Pre-update middleware to push old record to history
+// Pre-update middleware to push old record to history (capped at 100 entries)
 DriverSchema.pre("findOneAndUpdate", async function (next) {
   try {
     const docToUpdate = await this.model.findOne(this.getQuery()).lean();
     if (docToUpdate) {
-      const updateBy = this.getOptions().updatedBy || "system"; // optional context
+      const updateBy = this.getOptions().updatedBy || "system";
       await this.model.updateOne(
         this.getQuery(),
         {
           $push: {
             history: {
-              updatedAt: new Date(),
-              updatedBy: updateBy,
-              oldData: docToUpdate,
+              $each: [{ updatedAt: new Date(), updatedBy: updateBy, oldData: docToUpdate }],
+              $slice: -100,
             },
           },
         }
@@ -110,6 +102,13 @@ DriverSchema.pre("findOneAndUpdate", async function (next) {
     next(err);
   }
 });
+
+// Compound index for compliance expiry queries (reports, alerts)
+DriverSchema.index({ dlExpiry: 1 });
+DriverSchema.index({ dotExpiry: 1 });
+DriverSchema.index({ cbiExpiry: 1 });
+DriverSchema.index({ mvrExpiry: 1 });
+DriverSchema.index({ fingerPrintsExpiry: 1 });
 
 const DriverModel = mongoose.model("Driver", DriverSchema);
 

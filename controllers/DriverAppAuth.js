@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import DriverModel from "../models/DriverSchema.js";
 import ActiveModel from "../models/ActiveSchema.js";
 import config from "../config/index.js";
+import { withTransaction } from "../db/withTransaction.js";
 
 function normalizeEmail(email) {
   if (!email) return null;
@@ -141,26 +142,20 @@ export const loginDriver = async (req, res) => {
       });
     }
 
-    if (historyChanges.length) {
-      console.info(
-        "Driver app login: auto-updated roster",
-        driver.driverId,
-        historyChanges
-          .map((change) => `${change.field}:${change.oldValue ?? "null"}->${change.newValue}`)
-          .join(", "),
-      );
-      await activeRecord.save();
-    }
-
     const token = jwt.sign({ driverId: driver._id.toString() }, config.driverJwt.secret, {
       expiresIn: config.driverJwt.expiresIn,
     });
 
-    if (!driver.driverApp) driver.driverApp = {};
-    driver.driverApp.lastLoginAt = new Date();
-    if (deviceId !== undefined) driver.driverApp.deviceId = deviceId ? String(deviceId) : undefined;
-    if (pushToken !== undefined) driver.driverApp.pushToken = pushToken ? String(pushToken) : undefined;
-    await driver.save();
+    await withTransaction(async (session) => {
+      if (historyChanges.length) {
+        await activeRecord.save({ session });
+      }
+      if (!driver.driverApp) driver.driverApp = {};
+      driver.driverApp.lastLoginAt = new Date();
+      if (deviceId !== undefined) driver.driverApp.deviceId = deviceId ? String(deviceId) : undefined;
+      if (pushToken !== undefined) driver.driverApp.pushToken = pushToken ? String(pushToken) : undefined;
+      await driver.save({ session });
+    });
 
     return res.status(200).json({
       message: "Login successful.",

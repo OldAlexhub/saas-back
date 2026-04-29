@@ -1,240 +1,45 @@
 import { Router } from "express";
-import multer from "multer";
-
-import { authenticate, requireAdmin } from "../middleware/auth.js";
-
-// Controllers
-import {
-    addActive,
-    getActiveById,
-    getAllActives,
-    setAvailability,
-    setStatus,
-    updateActive,
-} from "../controllers/Activate.js";
-// Admin diagnostics controller removed
+import { getCompanyProfile, updateCompanyProfile } from "../controllers/Company.js";
 import { listDiagnostics } from "../controllers/AdminDiagnostics.js";
-import {
-    addAdmins,
-    AdminLogin,
-    listAdmins,
-    updateApproval,
-} from "../controllers/Admins.js";
-import {
-    assignBooking,
-    cancelBooking,
-    changeStatus,
-    createBooking,
-    getBookingById,
-    listBookings,
-    updateBooking,
-} from "../controllers/Booking.js";
-import {
-    getCompanyProfile,
-    updateCompanyProfile,
-} from "../controllers/Company.js";
-import {
-    acknowledgeMyBooking,
-    createFlagdownRide,
-    declineMyBooking,
-    getCurrentAssignment,
-    getDriverFare,
-    getDriverProfile,
-    listMyBookings,
-    registerDriverPushToken,
-    reportBookingLocation,
-    updateMyBookingStatus,
-    updatePresence,
-} from "../controllers/DriverApp.js";
-import {
-    changeDriverPassword,
-    loginDriver,
-    logoutDriver,
-} from "../controllers/DriverAppAuth.js";
-import { listDriverLocationTimeline } from "../controllers/DriverLocationTimeline.js";
-import {
-    createDriverMessage,
-    deleteDriverMessage,
-    driverAcknowledgeMessage,
-    driverSnoozeMessage,
-    listDriverMessages,
-    sendDriverMessageNow,
-    updateDriverMessage,
-} from "../controllers/DriverMessages.js";
-import {
-    addDriver,
-    getDriverById,
-    listDrivers,
-    setDriverAppCredentials,
-    updateDriver,
-} from "../controllers/Drivers.js";
-import { addFare, getFare, updateFare } from "../controllers/Fares.js";
-import {
-    createFlatRate,
-    deleteFlatRate,
-    listFlatRates,
-    updateFlatRate,
-} from "../controllers/FlatRates.js";
-import { downloadVehicleFilesZip, listVehicleFiles } from "../controllers/VehicleFiles.js";
-import {
-    addVehicle,
-    downloadInspectionFile,
-    getVehicle,
-    listVehicles,
-    listVehiclesByCabs,
-    updateVehicle,
-} from "../controllers/Vehicles.js";
-import { authenticateDriver } from "../middleware/driverAuth.js";
+import { authenticate, requireAdmin } from "../middleware/auth.js";
+import activesRouter from "./actives.js";
+import adminsRouter from "./admins.js";
+import bookingsRouter from "./bookings.js";
+import driverAppRouter from "./driverApp.js";
+import driversRouter from "./drivers.js";
+import faresRouter from "./fares.js";
+import reportsRouter from "./reports.js";
+import vehiclesRouter from "./vehicles.js";
+import vehicleFilesRouter from "./vehicleFiles.js";
+import messagesRouter from "./messages.js";
 
-import {
-    appendHos,
-    endDuty,
-    getDutyLogs,
-    getHosSummary,
-    startDuty,
-} from "../controllers/DriverApp.js";
-import reportsRouter from './reports.js';
 const router = Router();
-const driverAppRouter = Router();
 
-// --- Uploads (in-memory) ---
-const storage = multer.memoryStorage();
-const upload = multer({
-    storage,
-    limits: { fileSize: 25 * 1024 * 1024 },
-});
-
-// =================== AUTH =======================
-router.post("/admins", addAdmins); // signup
-router.post("/admins/login", AdminLogin); // login
-router.put("/admins/:id/approval", authenticate, requireAdmin, updateApproval);
+// ---- Public / pre-auth routes ----
+router.use("/admins", adminsRouter);
 router.get("/company/profile", getCompanyProfile);
 
-// Require auth for everything below. We evaluate the DISABLE_AUTH flag at
-// request-time so tests can toggle authentication by setting the env var
-// before making requests (some tests set DISABLE_AUTH in beforeAll()).
+// ---- Auth gate: everything below requires admin ----
 router.use((req, res, next) => {
-    if (process.env.DISABLE_AUTH === 'true' || process.env.DISABLE_AUTH === '1') {
-        // test mode: skip authentication
+    if (process.env.DISABLE_AUTH === "true" || process.env.DISABLE_AUTH === "1") {
         return next();
     }
-    // Apply authentication and admin requirement
     return authenticate(req, res, (err) => {
         if (err) return next(err);
         return requireAdmin(req, res, next);
     });
 });
 
-router.get("/admins", listAdmins);
 router.put("/company/profile", updateCompanyProfile);
-router.get("/messages", listDriverMessages);
-router.post("/messages", createDriverMessage);
-router.post("/messages/send-now", sendDriverMessageNow);
-router.patch("/messages/:id", updateDriverMessage);
-router.delete("/messages/:id", deleteDriverMessage);
-
-// Admin diagnostics: query diagnostics submitted by drivers
-router.get('/admin/diagnostics', listDiagnostics);
-
-// =================== DRIVERS ==================
-router.post("/drivers", addDriver);
-router.get("/drivers", listDrivers);
-router.get("/drivers/location-timeline", listDriverLocationTimeline);
-router.get("/drivers/:id", getDriverById);
-router.put("/drivers/:id", updateDriver);
-router.patch("/drivers/:id/app-credentials", setDriverAppCredentials);
-
-// =================== VEHICLES =================
-router.get("/vehicles", listVehicles);
-router.post("/vehicles", upload.single("annualInspectionFile"), addVehicle);
-router.post("/vehicles/by-cabs", listVehiclesByCabs);
-router.get("/vehicles/:id", getVehicle);
-// Authenticated download of a vehicle's inspection file (admins only)
-router.get("/vehicles/:id/inspection", authenticate, requireAdmin, downloadInspectionFile);
-router.put("/vehicles/:id", upload.single("annualInspectionFile"), updateVehicle);
-// Vehicle files: list and batch download (zip)
-router.get('/vehicle-files', listVehicleFiles);
-router.get('/vehicle-files/zip', downloadVehicleFilesZip);
-
-// =================== ACTIVE ===================
-router.post("/actives", addActive);
-router.put("/actives/:id", updateActive);
-router.put("/actives/:id/status", setStatus);
-router.put("/actives/:id/availability", setAvailability);
-router.get("/actives", getAllActives);
-router.get("/actives/:id", getActiveById);
-
-// Admin diagnostics viewer removed
-
-// =================== FARES ====================
-router.post("/fares", addFare);
-router.put("/fares", updateFare);
-router.get("/fares/current", getFare);
-router.get("/fares/flatrates", listFlatRates);
-router.post("/fares/flatrates", createFlatRate);
-router.put("/fares/flatrates/:id", updateFlatRate);
-router.delete("/fares/flatrates/:id", deleteFlatRate);
-
-// =================== BOOKINGS =================
-router.post("/bookings", createBooking);
-router.get("/bookings", listBookings);
-router.get("/bookings/:id", getBookingById);
-router.patch("/bookings/:id", updateBooking);
-router.patch("/bookings/:id/assign", assignBooking);
-router.patch("/bookings/:id/status", changeStatus);
-router.post("/bookings/:id/cancel", cancelBooking);
-
-// Reports (legacy UI only) — no ad-hoc query route mounted
-// Mount legacy reports router so endpoints like /api/reports/income-per-driver are available
-router.use('/reports', reportsRouter);
-
-// ================= DRIVER APP =================
-driverAppRouter.post("/auth/login", loginDriver);
-driverAppRouter.post("/auth/logout", authenticateDriver, logoutDriver);
-driverAppRouter.post("/auth/password", authenticateDriver, changeDriverPassword);
-
-driverAppRouter.use(authenticateDriver);
-
-driverAppRouter.get("/me", getDriverProfile);
-driverAppRouter.get("/fare", getDriverFare);
-driverAppRouter.get("/bookings", listMyBookings);
-driverAppRouter.get("/bookings/current", getCurrentAssignment);
-driverAppRouter.post("/bookings/:id/acknowledge", acknowledgeMyBooking);
-driverAppRouter.post("/bookings/:id/decline", declineMyBooking);
-driverAppRouter.patch("/bookings/:id/status", updateMyBookingStatus);
-driverAppRouter.post("/bookings/:id/location", reportBookingLocation);
-driverAppRouter.post("/flagdowns", createFlagdownRide);
-driverAppRouter.patch("/presence", updatePresence);
-driverAppRouter.post("/push-token", registerDriverPushToken);
-// Driver app: allow drivers to acknowledge or snooze admin messages
-driverAppRouter.post('/messages/:id/acknowledge', driverAcknowledgeMessage);
-driverAppRouter.post('/messages/:id/snooze', driverSnoozeMessage);
-// Hours-of-service endpoints (driver POSTs deltas, admin/driver can read summary)
-driverAppRouter.post('/hos', appendHos);
-// Start/End duty records (HOS enforcement)
-driverAppRouter.post('/hos/start', startDuty);
-driverAppRouter.post('/hos/end', endDuty);
-// The router used by this project doesn't accept the `?` optional
-// parameter syntax in route patterns. Register two explicit routes
-// instead: one for the collection and one for a specific driver id.
-driverAppRouter.get('/hos', getHosSummary);
-driverAppRouter.get('/hos/:driverId', getHosSummary);
-// Duty logs (recent months)
-driverAppRouter.get('/hos/logs', getDutyLogs);
-driverAppRouter.get('/hos/logs/:driverId', getDutyLogs);
-// Upload diagnostics from driver app (requires driver auth)
-driverAppRouter.post('/diagnostics', async (req, res) => {
-    // Delegate to controller implementation inside DriverApp.js to keep auth/context consistent
-    try {
-        const { uploadDiagnostics } = await import('../controllers/DriverApp.js');
-        return await uploadDiagnostics(req, res);
-    } catch (err) {
-        console.error('Diagnostics route error', err);
-        return res.status(500).json({ message: 'Failed to handle diagnostics upload' });
-    }
-});
-// Upload diagnostics from driver app (requires driver auth)
-// Driver diagnostics upload endpoint removed
+router.get("/admin/diagnostics", listDiagnostics);
+router.use("/drivers", driversRouter);
+router.use("/vehicles", vehiclesRouter);
+router.use("/vehicle-files", vehicleFilesRouter);
+router.use("/actives", activesRouter);
+router.use("/fares", faresRouter);
+router.use("/bookings", bookingsRouter);
+router.use("/messages", messagesRouter);
+router.use("/reports", reportsRouter);
 
 export { driverAppRouter };
 export default router;

@@ -4,15 +4,15 @@ import AdminModel from "../models/AdminSchema.js";
 
 export async function authenticate(req, res, next) {
   try {
-    // Allow tests to disable authentication at runtime by setting DISABLE_AUTH
-    // environment variable (some tests toggle this in beforeAll()). When set,
-    // inject a fake admin user and continue.
     if (process.env.DISABLE_AUTH === 'true' || process.env.DISABLE_AUTH === '1') {
+      if (process.env.NODE_ENV !== 'test') {
+        throw new Error('DISABLE_AUTH is only permitted in test environments.');
+      }
       req.user = { id: 'test-admin', email: 'test@example', company: null, role: 'admin' };
       return next();
     }
-    const authHeader = req.headers.authorization || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+
+    const token = req.cookies?.token || null;
 
     if (!token) {
       return res.status(401).json({ message: "Authentication token missing." });

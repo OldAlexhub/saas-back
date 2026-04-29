@@ -481,12 +481,16 @@ export const getAllActives = async (req, res) => {
       };
     }
 
-    const results = await ActiveModel.find(query);
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));
+    const skip = (page - 1) * limit;
 
-    res.status(200).json({
-      count: results.length,
-      data: results,
-    });
+    const [results, total] = await Promise.all([
+      ActiveModel.find(query).skip(skip).limit(limit),
+      ActiveModel.countDocuments(query),
+    ]);
+
+    res.status(200).json({ total, page, limit, pages: Math.ceil(total / limit), data: results });
   } catch (error) {
     res.status(500).json({
       message: "Error fetching active drivers",

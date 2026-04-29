@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import DriverModel from "../models/DriverSchema.js";
+import { saveWithIdRetry } from "../utils/saveWithRetry.js";
 
 // ---- helper constants ----
 const DATE_FIELDS_EXPIRY = [
@@ -74,10 +75,17 @@ async function hashSsn(ssn) {
 }
 
 // ----------------- LIST DRIVERS -----------------
-export const listDrivers = async (_req, res) => {
+export const listDrivers = async (req, res) => {
   try {
-    const drivers = await DriverModel.find().select("-ssn -history").lean();
-    return res.status(200).json({ count: drivers.length, drivers });
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));
+    const skip = (page - 1) * limit;
+
+    const [drivers, total] = await Promise.all([
+      DriverModel.find().select("-ssn -history").skip(skip).limit(limit).lean(),
+      DriverModel.countDocuments(),
+    ]);
+    return res.status(200).json({ total, page, limit, pages: Math.ceil(total / limit), drivers });
   } catch (error) {
     console.error("Error listing drivers:", error);
     return res.status(500).json({ message: "Server error while fetching drivers." });
@@ -169,7 +177,7 @@ export const addDriver = async (req, res) => {
     }
 
     const hashedSsn = await hashSsn(ssn);
-    const driver = await DriverModel.create({
+    const payload = {
       firstName,
       lastName,
       dlNumber,
@@ -184,13 +192,18 @@ export const addDriver = async (req, res) => {
       cbiExpiry,
       mvrExpiry,
       fingerPrintsExpiry,
-    });
+    };
+
+    const driver = await saveWithIdRetry(() => DriverModel.create(payload), ['driverId']);
 
     return res.status(201).json({
       message: "Driver added successfully.",
       driver: sanitizeDriver(driver),
     });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ message: "A driver with this email or license number already exists." });
+    }
     console.error("Error adding driver:", error);
     return res.status(500).json({ message: "Server error while adding driver." });
   }

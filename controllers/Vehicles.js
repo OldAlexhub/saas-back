@@ -284,11 +284,15 @@ export const listVehicles = async (_req, res) => {
       }
     }
 
-    const vehicles = await VehicleModel.find(query).lean();
-    return res.status(200).json({
-      count: vehicles.length,
-      vehicles,
-    });
+    const page = Math.max(1, parseInt(_req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, parseInt(_req.query.limit || '50', 10)));
+    const skip = (page - 1) * limit;
+
+    const [vehicles, total] = await Promise.all([
+      VehicleModel.find(query).skip(skip).limit(limit).lean(),
+      VehicleModel.countDocuments(query),
+    ]);
+    return res.status(200).json({ total, page, limit, pages: Math.ceil(total / limit), vehicles });
   } catch (error) {
     console.error("Failed to list vehicles:", error);
     return res.status(500).json({ message: "Failed to fetch vehicles", error: error.message });

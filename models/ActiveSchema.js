@@ -111,8 +111,21 @@ const ActiveSchema = new mongoose.Schema({
   history: { type: [HistoryEntrySchema], default: [] }
 });
 
+// Cap history array at 200 entries on save
+ActiveSchema.pre("save", function (next) {
+  if (Array.isArray(this.history) && this.history.length > 200) {
+    this.history = this.history.slice(-200);
+  }
+  next();
+});
+
 // Geospatial index for proximity queries
 ActiveSchema.index({ currentLocation: "2dsphere" });
+// Fast lookups by driver and cab (used in assignment and conflict checks)
+ActiveSchema.index({ driverId: 1 }, { unique: true });
+ActiveSchema.index({ cabNumber: 1 }, { unique: true });
+// Filtering online/active roster
+ActiveSchema.index({ availability: 1, status: 1 });
 
 const ActiveModel = mongoose.model("actives", ActiveSchema);
 

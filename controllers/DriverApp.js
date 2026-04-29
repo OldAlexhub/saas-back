@@ -1,6 +1,8 @@
 import config from "../config/index.js";
 import ActiveModel from "../models/ActiveSchema.js";
 import BookingModel from "../models/BookingSchema.js";
+import { saveWithIdRetry } from "../utils/saveWithRetry.js";
+import { DRIVER_LOCATION_TRAIL_MAX, DRIVER_LOCATION_TRAIL_RESPONSE_MAX } from "../config/constants.js";
 import { COMPANY_ID, CompanyModel } from "../models/CompanySchema.js";
 import DriverDiagnosticsModel from "../models/DriverDiagnostics.js";
 import DriverDutyModel from "../models/DriverDuty.js";
@@ -51,9 +53,6 @@ const DRIVER_VISIBLE_BOOKING_FIELDS = [
   "driverLocation",
   "driverLocationTrail",
 ];
-
-const DRIVER_LOCATION_TRAIL_MAX = 50;
-const DRIVER_LOCATION_TRAIL_RESPONSE_MAX = 10;
 
 const DRIVER_ALLOWED_STATUS_TRANSITIONS = {
   Assigned: ["EnRoute", "NoShow", "Cancelled"],
@@ -699,7 +698,7 @@ export const createFlagdownRide = async (req, res) => {
       note: "Driver recorded flagdown ride",
     });
 
-    await booking.save();
+    await saveWithIdRetry(() => booking.save(), ['bookingId']);
 
     const driverPayload = toDriverBookingPayload(booking);
     if (driverPayload?.driverId) {

@@ -193,15 +193,7 @@ BookingSchema.pre("save", async function (next) {
   setPointFromLonLat(this, "dropoff");
 
   if (!this.bookingId) {
-    let unique = false;
-    while (!unique) {
-      const randomId = Math.floor(10000 + Math.random() * 90000);
-      const exists = await mongoose.models.bookings.findOne({ bookingId: randomId });
-      if (!exists) {
-        this.bookingId = randomId;
-        unique = true;
-      }
-    }
+    this.bookingId = Math.floor(10000 + Math.random() * 90000);
   }
   next();
 });

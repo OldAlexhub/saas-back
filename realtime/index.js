@@ -5,6 +5,16 @@ import config from "../config/index.js";
 import AdminModel from "../models/AdminSchema.js";
 import DriverModel from "../models/DriverSchema.js";
 
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  if (!cookieHeader) return cookies;
+  cookieHeader.split(';').forEach((part) => {
+    const [name, ...rest] = part.trim().split('=');
+    if (name) cookies[name.trim()] = decodeURIComponent(rest.join('=').trim());
+  });
+  return cookies;
+}
+
 let io;
 
 async function resolveAdminFromToken(token) {
@@ -40,7 +50,10 @@ async function authorizeSocket(socket, next) {
     const query = socket.handshake.query || {};
 
     const role = auth.role || query.role;
-    const token = auth.token || query.token;
+
+    // Admin auth reads the HttpOnly cookie; driver auth uses Bearer token from handshake.
+    const cookies = parseCookies(socket.handshake.headers.cookie);
+    const token = (role === 'admin' ? cookies.token : null) || auth.token || query.token;
 
     if (!role || !token) {
       throw new Error("Missing socket credentials");
@@ -74,7 +87,7 @@ export function initRealtime(server) {
 
   io = new Server(server, {
     cors: {
-      origin: config.cors?.origin || "*",
+      origin: config.cors.origin,
       credentials: true,
     },
   });

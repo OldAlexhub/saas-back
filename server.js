@@ -3,6 +3,15 @@ import app from './app.js';
 import config from './config/index.js';
 import connectTodb from './db/connectTodb.js';
 import { initRealtime } from './realtime/index.js';
+import logger from './utils/logger.js';
+
+// Route all console calls through the structured pino logger so every log
+// statement in every controller/middleware benefits from redaction and level filtering.
+console.log = (...args) => logger.info(args.map(String).join(' '));
+console.info = (...args) => logger.info(args.map(String).join(' '));
+console.warn = (...args) => logger.warn(args.map(String).join(' '));
+console.error = (...args) => logger.error(args.map(String).join(' '));
+console.debug = (...args) => logger.debug(args.map(String).join(' '));
 
 const PORT = config.port;
 

@@ -100,16 +100,47 @@ export const AdminLogin = async (req, res) => {
       expiresIn: config.jwt.expiresIn,
     });
 
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'strict',
+      maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days in ms
+    });
+
     const name = `${user.firstName} ${user.lastName}`;
     return res.status(200).json({
       message: "Login successful.",
-      token,
       name,
       company: user.company,
     });
   } catch (error) {
     console.error("AdminLogin error:", error);
     return res.status(500).json({ message: "Server Error!" });
+  }
+};
+
+// LOGOUT
+export const AdminLogout = (_req, res) => {
+  res.clearCookie('token', { httpOnly: true, sameSite: 'strict' });
+  return res.status(200).json({ message: "Logged out successfully." });
+};
+
+// ME — returns current admin profile from the cookie session
+export const getMe = async (req, res) => {
+  try {
+    const admin = await AdminModel.findById(req.user.id).select("-password").lean();
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found." });
+    }
+    return res.status(200).json({
+      name: `${admin.firstName} ${admin.lastName}`,
+      email: admin.email,
+      company: admin.company,
+    });
+  } catch (error) {
+    console.error("getMe error:", error);
+    return res.status(500).json({ message: "Server error." });
   }
 };
 

@@ -4,10 +4,8 @@ import { COMPANY_ID, CompanyModel } from "../models/CompanySchema.js";
 import { emitToAdmins, emitToDriver } from "../realtime/index.js";
 import { toAdminBookingPayload, toDriverBookingPayload } from "../realtime/payloads.js";
 import { geocodeAddress, getDrivingDistanceMiles } from "../utils/mapbox.js";
-
-// ---- Configurable guards ----
-const LEAD_TIME_MINUTES = 15;
-const CONFLICT_WINDOW_MINUTES = 20;
+import { saveWithIdRetry } from "../utils/saveWithRetry.js";
+import { LEAD_TIME_MINUTES, CONFLICT_WINDOW_MINUTES } from "../config/constants.js";
 
 const NON_FINAL_STATUSES = ["Pending", "Assigned", "EnRoute", "PickedUp"];
 const FINAL_STATUSES = ["Completed", "Cancelled", "NoShow"];
@@ -347,9 +345,12 @@ async function findAutomaticAssignment({ booking }) {
 // LIST
 export const listBookings = async (req, res) => {
   try {
-    const { status, from, to, driverId, cabNumber, limit } = req.query;
-    const query = {};
+    const { status, from, to, driverId, cabNumber } = req.query;
+    const page = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));
+    const skip = (page - 1) * limit;
 
+    const query = {};
     if (status) query.status = status;
     if (driverId) query.driverId = driverId;
     if (cabNumber) query.cabNumber = cabNumber;
@@ -367,14 +368,11 @@ export const listBookings = async (req, res) => {
       if (toDate) query.pickupTime.$lte = toDate;
     }
 
-    let mongoQuery = BookingModel.find(query).sort({ pickupTime: 1 });
-    const limitVal = Number(limit);
-    if (Number.isFinite(limitVal) && limitVal > 0) {
-      mongoQuery = mongoQuery.limit(limitVal);
-    }
-
-    const bookings = await mongoQuery.lean();
-    return res.status(200).json({ count: bookings.length, bookings });
+    const [bookings, total] = await Promise.all([
+      BookingModel.find(query).sort({ pickupTime: 1 }).skip(skip).limit(limit).lean(),
+      BookingModel.countDocuments(query),
+    ]);
+    return res.status(200).json({ total, page, limit, pages: Math.ceil(total / limit), bookings });
   } catch (err) {
     console.error("listBookings error:", err);
     return res.status(500).json({ message: "Failed to fetch bookings", error: err.message });
@@ -585,7 +583,7 @@ export const createBooking = async (req, res) => {
 
     addAudit(booking, { byUserId, action: "create", after: booking.toObject() });
 
-    await booking.save();
+    await saveWithIdRetry(() => booking.save(), ['bookingId']);
     // If the request asked for automatic dispatch, attempt immediate auto-assignment
     if (dispatchMethodNormalized === 'auto') {
       // If we don't have pickup coords, we cannot run automatic dispatch — mark for reassignment

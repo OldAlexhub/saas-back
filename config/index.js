@@ -32,6 +32,11 @@ const config = {
   mongo: {
     uri: process.env.MONGO_URL,
   },
+  cors: {
+    origin: process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+      : ['http://localhost:3000'],
+  },
   mapbox: {
     token: process.env.MAPBOX_ACCESS_TOKEN,
   },
