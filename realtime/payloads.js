@@ -27,6 +27,17 @@ export function toDriverBookingPayload(bookingDoc) {
     appliedFees: Array.isArray(booking.appliedFees)
       ? booking.appliedFees.map((fee) => ({ name: fee?.name, amount: fee?.amount }))
       : [],
+    tripSession: booking.tripSession
+      ? {
+          sessionId: booking.tripSession.sessionId,
+          source: booking.tripSession.source,
+          startedAt: booking.tripSession.startedAt,
+          lastHeartbeatAt: booking.tripSession.lastHeartbeatAt,
+          syncStatus: booking.tripSession.syncStatus,
+          queueDepth: booking.tripSession.queueDepth,
+          nativeServiceRunning: booking.tripSession.nativeServiceRunning,
+        }
+      : null,
   };
 }
 
@@ -51,5 +62,17 @@ export function toAdminBookingPayload(bookingDoc) {
     estimatedFare: booking.estimatedFare,
     finalFare: booking.finalFare,
     needs_reassignment: booking.needs_reassignment,
+    tripSession: booking.tripSession
+      ? {
+          sessionId: booking.tripSession.sessionId,
+          source: booking.tripSession.source,
+          startedAt: booking.tripSession.startedAt,
+          lastHeartbeatAt: booking.tripSession.lastHeartbeatAt,
+          syncStatus: booking.tripSession.syncStatus,
+          queueDepth: booking.tripSession.queueDepth,
+          nativeServiceRunning: booking.tripSession.nativeServiceRunning,
+        }
+      : null,
+    syncIssues: Array.isArray(booking.syncIssues) ? booking.syncIssues.slice(-5) : [],
   };
 }

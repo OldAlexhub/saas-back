@@ -3,6 +3,8 @@ import {
     acknowledgeMyBooking,
     appendHos,
     createFlagdownRide,
+    cancelTripSession,
+    completeTripSession,
     declineMyBooking,
     endDuty,
     getCurrentAssignment,
@@ -11,9 +13,13 @@ import {
     getDutyLogs,
     getHosSummary,
     listMyBookings,
+    heartbeatTripSession,
+    recoverActiveTrip,
     registerDriverPushToken,
     reportBookingLocation,
+    startTripSession,
     startDuty,
+    syncTripEvents,
     updateMyBookingStatus,
     updatePresence,
 } from "../controllers/DriverApp.js";
@@ -36,6 +42,12 @@ router.get("/me", getDriverProfile);
 router.get("/fare", getDriverFare);
 router.get("/bookings", listMyBookings);
 router.get("/bookings/current", getCurrentAssignment);
+router.get("/trips/active", recoverActiveTrip);
+router.post("/trips/start", startTripSession);
+router.post("/trips/:id/heartbeat", heartbeatTripSession);
+router.post("/trips/:id/events", syncTripEvents);
+router.post("/trips/:id/complete", completeTripSession);
+router.post("/trips/:id/cancel", cancelTripSession);
 router.post("/bookings/:id/acknowledge", acknowledgeMyBooking);
 router.post("/bookings/:id/decline", declineMyBooking);
 router.patch("/bookings/:id/status", updateMyBookingStatus);

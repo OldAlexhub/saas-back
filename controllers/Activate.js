@@ -1,5 +1,6 @@
 // controllers/activeController.js
 import ActiveModel from "../models/ActiveSchema.js";
+import BookingModel from "../models/BookingSchema.js";
 import { COMPANY_ID, CompanyModel } from "../models/CompanySchema.js";
 import DriverModel from "../models/DriverSchema.js";
 import VehicleModel from "../models/VehicleSchema.js";
@@ -485,10 +486,34 @@ export const getAllActives = async (req, res) => {
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const skip = (page - 1) * limit;
 
-    const [results, total] = await Promise.all([
-      ActiveModel.find(query).skip(skip).limit(limit),
+    const [resultsRaw, total] = await Promise.all([
+      ActiveModel.find(query).skip(skip).limit(limit).lean(),
       ActiveModel.countDocuments(query),
     ]);
+
+    const driverIds = resultsRaw.map((record) => record.driverId).filter(Boolean);
+    const activeTrips = driverIds.length
+      ? await BookingModel.find({
+          driverId: { $in: driverIds },
+          status: { $in: ["Assigned", "EnRoute", "PickedUp"] },
+        })
+          .select(
+            "bookingId pickupAddress dropoffAddress pickupTime status driverId cabNumber dispatchMethod tripSource finalFare estimatedFare tripSession syncIssues",
+          )
+          .sort({ pickedUpAt: -1, pickupTime: 1 })
+          .lean()
+      : [];
+
+    const tripByDriver = new Map();
+    for (const trip of activeTrips) {
+      if (!trip?.driverId || tripByDriver.has(trip.driverId)) continue;
+      tripByDriver.set(trip.driverId, trip);
+    }
+
+    const results = resultsRaw.map((record) => ({
+      ...record,
+      currentTrip: tripByDriver.get(record.driverId) || null,
+    }));
 
     res.status(200).json({ total, page, limit, pages: Math.ceil(total / limit), data: results });
   } catch (error) {

@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import config from "../config/index.js";
 import ActiveModel from "../models/ActiveSchema.js";
 import BookingModel from "../models/BookingSchema.js";
@@ -9,6 +11,7 @@ import DriverDutyModel from "../models/DriverDuty.js";
 import DriverHOSModel from "../models/DriverHOS.js";
 import DriverLocationTimelineModel from "../models/DriverLocationTimeline.js";
 import DriverModel from "../models/DriverSchema.js";
+import DriverTripEventModel from "../models/DriverTripEvent.js";
 import { SINGLETON_ID as FARE_SINGLETON_ID, FareModel } from "../models/FareSchema.js";
 import FlatRateModel from "../models/FlatRateSchema.js";
 import { emitToAdmins, emitToDriver } from "../realtime/index.js";
@@ -52,6 +55,8 @@ const DRIVER_VISIBLE_BOOKING_FIELDS = [
   "flagdown",
   "driverLocation",
   "driverLocationTrail",
+  "tripSession",
+  "syncIssues",
 ];
 
 const DRIVER_ALLOWED_STATUS_TRANSITIONS = {
@@ -123,6 +128,71 @@ function coerceNumber(value) {
   return Number.isFinite(num) ? num : undefined;
 }
 
+function normalizeDate(value, fallback = new Date()) {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
+
+function createSessionId() {
+  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function normalizeQueueDepth(value) {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return Math.round(num);
+}
+
+function normalizeDeviceInfo(deviceInfo = {}) {
+  if (!deviceInfo || typeof deviceInfo !== "object") return {};
+  const safe = {};
+  for (const key of ["deviceId", "appVersion", "androidVersion", "model", "manufacturer", "nativeServiceRunning"]) {
+    if (deviceInfo[key] !== undefined && deviceInfo[key] !== null) {
+      safe[key] = deviceInfo[key];
+    }
+  }
+  return safe;
+}
+
+function applyTripSessionPatch(booking, patch = {}) {
+  if (!booking.tripSession) booking.tripSession = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) {
+      booking.tripSession[key] = value;
+    }
+  }
+}
+
+function appendSyncIssue(booking, issue = {}) {
+  if (!Array.isArray(booking.syncIssues)) booking.syncIssues = [];
+  booking.syncIssues.push({
+    at: issue.at || new Date(),
+    level: issue.level || "warn",
+    code: issue.code || "sync_issue",
+    message: issue.message || "Driver app sync issue",
+    queueDepth: normalizeQueueDepth(issue.queueDepth),
+    payload: issue.payload,
+  });
+  if (booking.syncIssues.length > 100) {
+    booking.syncIssues = booking.syncIssues.slice(-100);
+  }
+}
+
+function readEventLocation(payload = {}) {
+  const coords = payload.coords || payload.location?.coords || payload.location || payload;
+  const lat = coerceNumber(coords.latitude ?? coords.lat);
+  const lng = coerceNumber(coords.longitude ?? coords.lng ?? coords.lon);
+  if (lat === undefined || lng === undefined) return null;
+  return {
+    lat,
+    lng,
+    speed: coords.speed,
+    heading: coords.heading,
+    accuracy: coords.accuracy,
+  };
+}
+
 function buildDriverLocationUpdate({ lat, lng, speed, heading, accuracy }) {
   const la = Number(lat);
   const lon = Number(lng);
@@ -146,6 +216,62 @@ function buildDriverLocationUpdate({ lat, lng, speed, heading, accuracy }) {
     location: { ...point, updatedAt: at, speed: meta.speed, heading: meta.heading, accuracy: meta.accuracy },
     trailEntry: meta,
   };
+}
+
+async function persistTripLocation({ booking, driverId, locationPayload, capturedAt = new Date() }) {
+  const location = readEventLocation(locationPayload);
+  if (!location) return false;
+
+  const update = buildDriverLocationUpdate(location);
+  if (!update) return false;
+  update.location.updatedAt = capturedAt;
+  update.trailEntry.at = capturedAt;
+
+  try {
+    await DriverLocationTimelineModel.create({
+      driverId,
+      bookingId: booking._id,
+      tripSource: booking.tripSource || "dispatch",
+      point: {
+        type: "Point",
+        coordinates: update.location.coordinates,
+      },
+      speed: update.location.speed,
+      heading: update.location.heading,
+      accuracy: update.location.accuracy,
+      capturedAt,
+    });
+  } catch (timelineError) {
+    console.warn("timeline insert error:", timelineError.message);
+  }
+
+  booking.driverLocation = update.location;
+  if (!Array.isArray(booking.driverLocationTrail)) {
+    booking.driverLocationTrail = [];
+  }
+  booking.driverLocationTrail.push(update.trailEntry);
+  if (booking.driverLocationTrail.length > DRIVER_LOCATION_TRAIL_MAX) {
+    booking.driverLocationTrail = booking.driverLocationTrail.slice(-DRIVER_LOCATION_TRAIL_MAX);
+  }
+
+  try {
+    await ActiveModel.updateOne(
+      { driverId },
+      {
+        $set: {
+          currentLocation: {
+            type: "Point",
+            coordinates: update.location.coordinates,
+            updatedAt: capturedAt,
+          },
+        },
+      },
+    );
+  } catch (activeError) {
+    console.warn("active location update error:", activeError.message);
+  }
+
+  return true;
 }
 
 function applyDropoffData(booking, { dropoffAddress, dropoffLat, dropoffLon }) {
@@ -394,6 +520,600 @@ export const getCurrentAssignment = async (req, res) => {
   } catch (error) {
     console.error("Driver current assignment error:", error);
     return res.status(500).json({ message: "Server error while fetching current assignment." });
+  }
+};
+
+async function applyDriverCompletionFields({ booking, driverId, payload = {}, note }) {
+  const {
+    meterMiles,
+    waitMinutes,
+    dropoffAddress,
+    dropoffLat,
+    dropoffLon,
+    flatRateId,
+    otherFeeNames = [],
+  } = payload;
+
+  const dropLatNum = coerceNumber(dropoffLat);
+  const dropLonNum = coerceNumber(dropoffLon);
+  if (
+    (dropoffLat !== undefined || dropoffLon !== undefined) &&
+    (dropLatNum === undefined || dropLonNum === undefined)
+  ) {
+    const error = new Error("dropoffLat and dropoffLon must both be valid numbers when supplied.");
+    error.status = 400;
+    throw error;
+  }
+
+  const meterMilesNum = coerceNumber(meterMiles);
+  if (meterMiles !== undefined && meterMilesNum === undefined) {
+    const error = new Error("meterMiles must be a number.");
+    error.status = 400;
+    throw error;
+  }
+
+  const waitMinutesNum = coerceNumber(waitMinutes);
+  if (waitMinutes !== undefined && waitMinutesNum === undefined) {
+    const error = new Error("waitMinutes must be a number.");
+    error.status = 400;
+    throw error;
+  }
+
+  const fareConfig = await FareModel.findById(FARE_SINGLETON_ID).lean();
+  if (!fareConfig) {
+    const error = new Error("Fare configuration is missing. Contact dispatch.");
+    error.status = 500;
+    throw error;
+  }
+
+  const normalizedFeeNames = Array.isArray(otherFeeNames)
+    ? otherFeeNames
+        .map((name) => String(name || "").trim())
+        .filter((name) => name.length > 0)
+    : [];
+
+  const otherFeesResult = resolveOtherFeesByName(normalizedFeeNames, fareConfig.otherFees || []);
+  let totalFare = 0;
+
+  if (flatRateId) {
+    const flatRate = await FlatRateModel.findOne({ _id: flatRateId, active: true });
+    if (!flatRate) {
+      const error = new Error("Selected flat rate is no longer active.");
+      error.status = 404;
+      throw error;
+    }
+    booking.fareStrategy = "flat";
+    booking.flatRateRef = flatRate._id;
+    booking.flatRateName = flatRate.name;
+    booking.flatRateAmount = flatRate.amount;
+    totalFare = Number(flatRate.amount ?? 0);
+    if (meterMilesNum !== undefined) booking.meterMiles = meterMilesNum;
+    if (waitMinutesNum !== undefined) booking.waitMinutes = waitMinutesNum;
+  } else {
+    if (meterMilesNum === undefined) {
+      const error = new Error("meterMiles is required to complete the trip without a flat rate.");
+      error.status = 400;
+      throw error;
+    }
+    const meterResult = computeMeterSubtotal({
+      fareConfig,
+      meterMiles: meterMilesNum,
+      waitMinutes: waitMinutesNum ?? booking.waitMinutes ?? 0,
+      passengerCount: booking.passengers,
+    });
+    booking.fareStrategy = "meter";
+    booking.set("flatRateRef", undefined);
+    booking.set("flatRateName", undefined);
+    booking.set("flatRateAmount", undefined);
+    booking.meterMiles = meterResult.meterMiles;
+    booking.waitMinutes = meterResult.waitMinutes;
+    totalFare = meterResult.subtotal;
+  }
+
+  totalFare += otherFeesResult.total;
+  totalFare = roundFareAmount(totalFare, fareConfig.meterRoundingMode || "none");
+  booking.finalFare = totalFare;
+  booking.appliedFees = otherFeesResult.fees;
+
+  applyDropoffData(booking, { dropoffAddress, dropoffLat: dropLatNum, dropoffLon: dropLonNum });
+
+  const previousStatus = booking.status;
+  booking.status = "Completed";
+  stampStatusTime(booking, "Completed");
+  applyTripSessionPatch(booking, {
+    completedAt: new Date(),
+    syncStatus: "completed",
+    queueDepth: normalizeQueueDepth(payload.queueDepth),
+    lastSyncAttemptAt: new Date(),
+  });
+
+  if (!Array.isArray(booking.history)) booking.history = [];
+  booking.history.push({
+    at: new Date(),
+    byUserId: driverId,
+    action: "status",
+    before: { status: previousStatus },
+    after: {
+      status: "Completed",
+      finalFare: booking.finalFare,
+      meterMiles: booking.meterMiles,
+      waitMinutes: booking.waitMinutes,
+      droppedOffAt: booking.droppedOffAt,
+      dropoffAddress: booking.dropoffAddress,
+      dropoffLat: booking.dropoffLat,
+      dropoffLon: booking.dropoffLon,
+      fareStrategy: booking.fareStrategy,
+      flatRateName: booking.flatRateName,
+      flatRateAmount: booking.flatRateAmount,
+      appliedFees: booking.appliedFees,
+    },
+    note: note || "Driver completed trip session",
+  });
+}
+
+export const recoverActiveTrip = async (req, res) => {
+  try {
+    const booking = await BookingModel.findOne({
+      driverId: req.driver.driverId,
+      status: { $in: ["PickedUp", "EnRoute"] },
+    })
+      .select(DRIVER_VISIBLE_BOOKING_FIELDS.join(" "))
+      .sort({ "tripSession.lastHeartbeatAt": -1, pickedUpAt: -1, pickupTime: 1 })
+      .lean();
+
+    return res.status(200).json({ booking: sanitizeBooking(booking) });
+  } catch (error) {
+    console.error("Driver trip recovery error:", error);
+    return res.status(500).json({ message: "Server error while recovering active trip." });
+  }
+};
+
+export const startTripSession = async (req, res) => {
+  try {
+    const driverId = req.driver.driverId;
+    const {
+      bookingId,
+      source,
+      clientSessionId,
+      deviceId,
+      startedAt,
+      localStartedAt,
+      deviceInfo,
+      pickupLat,
+      pickupLon,
+      pickupAddress,
+      pickupDescription,
+      passengers,
+      notes,
+      flatRateId,
+    } = req.body || {};
+
+    const sessionId = String(clientSessionId || createSessionId());
+    const tripSource = source === "flagdown" || !bookingId ? "flagdown" : "dispatch";
+    const now = new Date();
+    const active = await ActiveModel.findOne({ driverId });
+    if (!active || active.status !== "Active") {
+      return res.status(409).json({ message: "Driver must be Active on the roster to start a trip." });
+    }
+    if (active.availability !== "Online") {
+      return res.status(409).json({ message: "Driver must be Online to start a trip." });
+    }
+    if (!active.cabNumber) {
+      return res.status(409).json({ message: "Active roster record is missing a cab assignment." });
+    }
+
+    let createdNewBooking = false;
+    let booking = await BookingModel.findOne({
+      driverId,
+      "tripSession.clientSessionId": sessionId,
+      status: { $nin: ["Completed", "Cancelled", "NoShow"] },
+    });
+
+    if (!booking && tripSource === "dispatch") {
+      booking = await BookingModel.findOne({ _id: bookingId, driverId });
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found for driver." });
+      }
+      if (!["Assigned", "EnRoute", "PickedUp"].includes(booking.status)) {
+        return res.status(409).json({ message: `Cannot start a trip from status ${booking.status}.` });
+      }
+    }
+
+    if (!booking && tripSource === "flagdown") {
+      const passengersNum = coerceNumber(passengers);
+      if (passengers !== undefined && (passengersNum === undefined || passengersNum < 1)) {
+        return res.status(400).json({ message: "passengers must be a positive number." });
+      }
+
+      const pickupLatNum = coerceNumber(pickupLat);
+      const pickupLonNum = coerceNumber(pickupLon);
+      if (
+        (pickupLat !== undefined || pickupLon !== undefined) &&
+        (pickupLatNum === undefined || pickupLonNum === undefined)
+      ) {
+        return res.status(400).json({ message: "pickupLat and pickupLon must both be valid numbers." });
+      }
+
+      booking = new BookingModel({
+        customerName: "Flagdown Rider",
+        phoneNumber: "FLAGDOWN",
+        pickupAddress: pickupAddress ? String(pickupAddress).trim() : "Flagdown Pickup",
+        pickupTime: now,
+        pickupLat: pickupLatNum,
+        pickupLon: pickupLonNum,
+        passengers: passengersNum ? Math.max(1, Math.round(passengersNum)) : 1,
+        notes: notes ? String(notes).trim() : undefined,
+        status: "PickedUp",
+        driverId,
+        cabNumber: active.cabNumber,
+        dispatchMethod: "flagdown",
+        tripSource: "driver",
+        assignedAt: now,
+        confirmedAt: now,
+        pickedUpAt: now,
+        flagdown: {
+          createdByDriverId: driverId,
+          createdAt: now,
+          pickupDescription: pickupDescription ? String(pickupDescription).trim() : undefined,
+        },
+      });
+      createdNewBooking = true;
+    }
+
+    if (flatRateId && booking) {
+      const flatRate = await FlatRateModel.findOne({ _id: flatRateId, active: true });
+      if (!flatRate) {
+        return res.status(404).json({ message: "Selected flat rate is no longer active." });
+      }
+      booking.fareStrategy = "flat";
+      booking.flatRateRef = flatRate._id;
+      booking.flatRateName = flatRate.name;
+      booking.flatRateAmount = flatRate.amount;
+    }
+
+    const previousStatus = booking.status;
+    if (booking.status === "Assigned") {
+      booking.status = "EnRoute";
+      stampStatusTime(booking, "EnRoute");
+    }
+    if (booking.status === "EnRoute") {
+      booking.status = "PickedUp";
+      stampStatusTime(booking, "PickedUp");
+    }
+
+    const device = normalizeDeviceInfo(deviceInfo);
+    applyTripSessionPatch(booking, {
+      sessionId: booking.tripSession?.sessionId || sessionId,
+      clientSessionId: booking.tripSession?.clientSessionId || sessionId,
+      source: tripSource,
+      deviceId: deviceId || device.deviceId,
+      startedByDriverId: driverId,
+      startedAt: booking.tripSession?.startedAt || normalizeDate(startedAt, now),
+      localStartedAt: localStartedAt ? normalizeDate(localStartedAt, now) : booking.tripSession?.localStartedAt,
+      lastHeartbeatAt: now,
+      syncStatus: "online",
+      queueDepth: 0,
+      appVersion: device.appVersion,
+      androidVersion: device.androidVersion,
+      nativeServiceRunning: device.nativeServiceRunning,
+    });
+
+    if (!Array.isArray(booking.history)) booking.history = [];
+    booking.history.push({
+      at: now,
+      byUserId: driverId,
+      action: "trip-session",
+      before: { status: previousStatus },
+      after: {
+        status: booking.status,
+        tripSession: {
+          sessionId: booking.tripSession?.sessionId,
+          source: booking.tripSession?.source,
+          deviceId: booking.tripSession?.deviceId,
+        },
+      },
+      note: tripSource === "flagdown" ? "Driver started flagdown trip session" : "Driver started dispatch trip session",
+    });
+
+    await saveWithIdRetry(() => booking.save(), ["bookingId"]);
+
+    const driverPayload = toDriverBookingPayload(booking);
+    emitToDriver(driverId, "booking:status", {
+      event: tripSource === "flagdown" ? "flagdown" : "status",
+      previousStatus,
+      booking: driverPayload,
+    });
+    emitToAdmins("assignment:updated", {
+      event: tripSource === "flagdown" ? "flagdown" : "status",
+      previousStatus,
+      booking: toAdminBookingPayload(booking),
+    });
+
+    return res.status(createdNewBooking ? 201 : 200).json({
+      message: "Trip session started.",
+      booking: sanitizeBooking(booking),
+      tripSession: booking.tripSession,
+    });
+  } catch (error) {
+    console.error("Driver trip start error:", error);
+    return res.status(500).json({ message: "Server error while starting trip session." });
+  }
+};
+
+export const heartbeatTripSession = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const driverId = req.driver.driverId;
+    const { queueDepth, syncStatus, meter, localState, location, deviceInfo } = req.body || {};
+    const booking = await BookingModel.findOne({
+      _id: id,
+      driverId,
+      status: { $in: ["Assigned", "EnRoute", "PickedUp"] },
+    });
+
+    if (!booking) {
+      return res.status(404).json({ message: "Active booking not found for driver." });
+    }
+
+    const now = new Date();
+    const device = normalizeDeviceInfo(deviceInfo);
+    applyTripSessionPatch(booking, {
+      lastHeartbeatAt: now,
+      lastSyncAttemptAt: now,
+      syncStatus: syncStatus || (normalizeQueueDepth(queueDepth) > 0 ? "queued" : "online"),
+      queueDepth: normalizeQueueDepth(queueDepth),
+      lastMeter: meter,
+      lastKnownLocalState: localState,
+      appVersion: device.appVersion,
+      androidVersion: device.androidVersion,
+      nativeServiceRunning: device.nativeServiceRunning,
+    });
+
+    if (location) {
+      await persistTripLocation({ booking, driverId, locationPayload: location, capturedAt: now });
+    }
+
+    await booking.save();
+    emitToAdmins("driver:trip-heartbeat", {
+      booking: toAdminBookingPayload(booking),
+      tripSession: booking.tripSession,
+    });
+
+    return res.status(200).json({ message: "Trip heartbeat recorded.", booking: sanitizeBooking(booking) });
+  } catch (error) {
+    console.error("Driver trip heartbeat error:", error);
+    return res.status(500).json({ message: "Server error while recording trip heartbeat." });
+  }
+};
+
+export const syncTripEvents = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const driverId = req.driver.driverId;
+    const { events, queueDepth, deviceInfo } = req.body || {};
+    if (!Array.isArray(events)) {
+      return res.status(400).json({ message: "events must be an array." });
+    }
+    if (events.length > 500) {
+      return res.status(400).json({ message: "A single sync request may include at most 500 events." });
+    }
+
+    const booking = await BookingModel.findOne({ _id: id, driverId });
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found for driver." });
+    }
+
+    const now = new Date();
+    const accepted = [];
+    const duplicates = [];
+    const rejected = [];
+
+    for (let index = 0; index < events.length; index += 1) {
+      const event = events[index] || {};
+      const eventId = event.eventId ? String(event.eventId).trim() : "";
+      const type = event.type ? String(event.type).trim() : "";
+      if (!eventId || !type) {
+        rejected.push({ index, reason: "eventId and type are required" });
+        continue;
+      }
+
+      const capturedAt = normalizeDate(event.capturedAt, now);
+      const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+      const device = normalizeDeviceInfo(event.device || deviceInfo);
+
+      try {
+        await DriverTripEventModel.create({
+          eventId,
+          driverId,
+          bookingId: booking._id,
+          tripSessionId: booking.tripSession?.sessionId || event.tripSessionId,
+          type,
+          sequence: coerceNumber(event.sequence),
+          capturedAt,
+          receivedAt: now,
+          payload,
+          device,
+        });
+        accepted.push(eventId);
+
+        if (type === "location" || type === "location_sample") {
+          await persistTripLocation({ booking, driverId, locationPayload: payload, capturedAt });
+        } else if (type === "meter" || type === "meter_update" || type === "meter_stop") {
+          applyTripSessionPatch(booking, { lastMeter: payload, lastEventAt: capturedAt });
+        } else if (type === "sync_issue" || type === "diagnostic") {
+          appendSyncIssue(booking, {
+            at: capturedAt,
+            level: payload.level || (type === "diagnostic" ? "info" : "warn"),
+            code: payload.code || type,
+            message: payload.message || "Driver app event",
+            queueDepth: payload.queueDepth,
+            payload,
+          });
+        }
+      } catch (eventError) {
+        if (eventError?.code === 11000) {
+          duplicates.push(eventId);
+          continue;
+        }
+        rejected.push({ eventId, reason: eventError.message || "event insert failed" });
+      }
+    }
+
+    const device = normalizeDeviceInfo(deviceInfo);
+    applyTripSessionPatch(booking, {
+      lastSyncAttemptAt: now,
+      lastEventAt: accepted.length ? now : booking.tripSession?.lastEventAt,
+      eventCount: Number(booking.tripSession?.eventCount || 0) + accepted.length,
+      duplicateEventCount: Number(booking.tripSession?.duplicateEventCount || 0) + duplicates.length,
+      queueDepth: normalizeQueueDepth(queueDepth),
+      syncStatus: normalizeQueueDepth(queueDepth) > 0 ? "queued" : "online",
+      appVersion: device.appVersion,
+      androidVersion: device.androidVersion,
+      nativeServiceRunning: device.nativeServiceRunning,
+    });
+
+    if (!Array.isArray(booking.history)) booking.history = [];
+    if (accepted.length || duplicates.length || rejected.length) {
+      booking.history.push({
+        at: now,
+        byUserId: driverId,
+        action: "trip-sync",
+        after: {
+          accepted: accepted.length,
+          duplicates: duplicates.length,
+          rejected: rejected.length,
+          queueDepth: normalizeQueueDepth(queueDepth),
+        },
+        note: "Driver app synced local trip events",
+      });
+    }
+
+    await booking.save();
+
+    emitToAdmins("driver:trip-sync", {
+      booking: toAdminBookingPayload(booking),
+      accepted: accepted.length,
+      duplicates: duplicates.length,
+      rejected: rejected.length,
+      queueDepth: normalizeQueueDepth(queueDepth),
+    });
+
+    return res.status(200).json({
+      message: "Trip events synced.",
+      accepted,
+      duplicates,
+      rejected,
+      booking: sanitizeBooking(booking),
+    });
+  } catch (error) {
+    console.error("Driver trip sync error:", error);
+    return res.status(500).json({ message: "Server error while syncing trip events." });
+  }
+};
+
+export const completeTripSession = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const driverId = req.driver.driverId;
+    const booking = await BookingModel.findOne({ _id: id, driverId });
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found for driver." });
+    }
+    if (booking.status === "Completed") {
+      return res.status(200).json({ message: "Trip already completed.", booking: sanitizeBooking(booking) });
+    }
+    if (["Cancelled", "NoShow"].includes(booking.status)) {
+      return res.status(409).json({ message: `Cannot complete a ${booking.status} trip.` });
+    }
+    if (!["PickedUp", "EnRoute"].includes(booking.status)) {
+      return res.status(409).json({ message: `Cannot complete a trip from status ${booking.status}.` });
+    }
+
+    await applyDriverCompletionFields({
+      booking,
+      driverId,
+      payload: req.body || {},
+      note: req.body?.note || "Driver completed trip session",
+    });
+
+    await booking.save();
+
+    const driverPayload = toDriverBookingPayload(booking);
+    emitToDriver(driverId, "booking:status", {
+      event: "status",
+      previousStatus: "PickedUp",
+      booking: driverPayload,
+    });
+    emitToAdmins("assignment:updated", {
+      event: "status",
+      previousStatus: "PickedUp",
+      booking: toAdminBookingPayload(booking),
+    });
+
+    return res.status(200).json({ message: "Trip completed.", booking: sanitizeBooking(booking) });
+  } catch (error) {
+    console.error("Driver trip complete error:", error);
+    const status = error.status || 500;
+    return res.status(status).json({ message: status === 500 ? "Server error while completing trip." : error.message });
+  }
+};
+
+export const cancelTripSession = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const driverId = req.driver.driverId;
+    const { cancelReason, note } = req.body || {};
+    if (!cancelReason) {
+      return res.status(400).json({ message: "cancelReason is required when cancelling a trip." });
+    }
+
+    const booking = await BookingModel.findOne({ _id: id, driverId });
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found for driver." });
+    }
+    if (["Completed", "Cancelled", "NoShow"].includes(booking.status)) {
+      return res.status(409).json({ message: `Trip is already ${booking.status}.` });
+    }
+
+    const previousStatus = booking.status;
+    booking.status = "Cancelled";
+    booking.cancelledBy = "driver";
+    booking.cancelReason = cancelReason;
+    stampStatusTime(booking, "Cancelled");
+    applyTripSessionPatch(booking, {
+      cancelledAt: new Date(),
+      syncStatus: "cancelled",
+      queueDepth: normalizeQueueDepth(req.body?.queueDepth),
+      lastSyncAttemptAt: new Date(),
+    });
+
+    if (!Array.isArray(booking.history)) booking.history = [];
+    booking.history.push({
+      at: new Date(),
+      byUserId: driverId,
+      action: "status",
+      before: { status: previousStatus },
+      after: { status: "Cancelled", cancelledBy: booking.cancelledBy, cancelReason },
+      note: note || "Driver cancelled trip session",
+    });
+
+    await booking.save();
+
+    emitToDriver(driverId, "booking:status", {
+      event: "status",
+      previousStatus,
+      booking: toDriverBookingPayload(booking),
+    });
+    emitToAdmins("assignment:updated", {
+      event: "status",
+      previousStatus,
+      booking: toAdminBookingPayload(booking),
+    });
+
+    return res.status(200).json({ message: "Trip cancelled.", booking: sanitizeBooking(booking) });
+  } catch (error) {
+    console.error("Driver trip cancel error:", error);
+    return res.status(500).json({ message: "Server error while cancelling trip." });
   }
 };
 

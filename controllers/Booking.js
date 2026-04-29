@@ -1093,6 +1093,8 @@ export const changeStatus = async (req, res) => {
       return res.status(400).json({ message: `Booking already ${booking.status}.` });
     }
 
+    const previousStatus = booking.status;
+
     if (!isValidTransition(booking.status, toStatus)) {
       return res.status(400).json({ message: `Invalid transition ${booking.status} → ${toStatus}.` });
     }

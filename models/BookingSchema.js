@@ -111,6 +111,50 @@ const BookingSchema = new mongoose.Schema(
       },
     ],
 
+    tripSession: {
+      sessionId: { type: String, trim: true },
+      clientSessionId: { type: String, trim: true },
+      source: { type: String, enum: ["dispatch", "flagdown"], default: "dispatch" },
+      deviceId: { type: String, trim: true },
+      startedByDriverId: { type: String, trim: true },
+      startedAt: { type: Date },
+      localStartedAt: { type: Date },
+      lastHeartbeatAt: { type: Date },
+      lastEventAt: { type: Date },
+      lastSyncAttemptAt: { type: Date },
+      completedAt: { type: Date },
+      cancelledAt: { type: Date },
+      recoveryCount: { type: Number, default: 0, min: 0 },
+      recoveredAt: { type: Date },
+      eventCount: { type: Number, default: 0, min: 0 },
+      duplicateEventCount: { type: Number, default: 0, min: 0 },
+      queueDepth: { type: Number, default: 0, min: 0 },
+      syncStatus: {
+        type: String,
+        enum: ["unknown", "online", "queued", "offline", "recovering", "completed", "cancelled"],
+        default: "unknown",
+      },
+      nativeServiceRunning: { type: Boolean },
+      appVersion: { type: String },
+      androidVersion: { type: String },
+      lastMeter: { type: mongoose.Schema.Types.Mixed },
+      lastKnownLocalState: { type: mongoose.Schema.Types.Mixed },
+    },
+
+    syncIssues: {
+      type: [
+        {
+          at: { type: Date, default: Date.now },
+          level: { type: String, enum: ["info", "warn", "error"], default: "warn" },
+          code: { type: String, trim: true },
+          message: { type: String },
+          queueDepth: { type: Number, min: 0 },
+          payload: { type: mongoose.Schema.Types.Mixed },
+        },
+      ],
+      default: [],
+    },
+
     // Status timestamps
     confirmedAt: { type: Date },
     enRouteAt: { type: Date },
@@ -172,6 +216,9 @@ BookingSchema.index({ status: 1, pickupTime: 1 });
 BookingSchema.index({ driverId: 1, pickupTime: 1, status: 1 });
 BookingSchema.index({ cabNumber: 1, pickupTime: 1, status: 1 });
 BookingSchema.index({ tripSource: 1, createdAt: -1 });
+BookingSchema.index({ "tripSession.sessionId": 1 });
+BookingSchema.index({ "tripSession.clientSessionId": 1 });
+BookingSchema.index({ driverId: 1, status: 1, "tripSession.lastHeartbeatAt": -1 });
 
 // ----- Helpers to sync lon/lat <-> GeoJSON -----
 function setPointFromLonLat(doc, prefix) {
