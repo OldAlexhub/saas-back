@@ -1,10 +1,22 @@
 import express from 'express';
-import { incomePerDriver, queryReports } from '../controllers/ReportsController.js';
+import {
+  driverComplianceReport,
+  hoursOfServiceReport,
+  incomePerDriver,
+  queryReports,
+  tripDataReport,
+  vehicleComplianceReport,
+} from '../controllers/ReportsController.js';
 
 const router = express.Router();
 
 // POST /api/reports/query
 router.post('/query', queryReports);
+
+router.get('/trip-data', tripDataReport);
+router.get('/hours-of-service', hoursOfServiceReport);
+router.get('/driver-compliance', driverComplianceReport);
+router.get('/vehicle-compliance', vehicleComplianceReport);
 
 // GET /api/reports/income-per-driver?from=YYYY-MM-DD&to=YYYY-MM-DD&driverId=xxxx&limit=100
 router.get('/income-per-driver', incomePerDriver);
