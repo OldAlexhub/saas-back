@@ -817,17 +817,20 @@ export const startTripSession = async (req, res) => {
 
     await saveWithIdRetry(() => booking.save(), ["bookingId"]);
 
-    const driverPayload = toDriverBookingPayload(booking);
-    emitToDriver(driverId, "booking:status", {
-      event: tripSource === "flagdown" ? "flagdown" : "status",
-      previousStatus,
-      booking: driverPayload,
-    });
-    emitToAdmins("assignment:updated", {
-      event: tripSource === "flagdown" ? "flagdown" : "status",
-      previousStatus,
-      booking: toAdminBookingPayload(booking),
-    });
+    try {
+      emitToDriver(driverId, "booking:status", {
+        event: tripSource === "flagdown" ? "flagdown" : "status",
+        previousStatus,
+        booking: toDriverBookingPayload(booking),
+      });
+      emitToAdmins("assignment:updated", {
+        event: tripSource === "flagdown" ? "flagdown" : "status",
+        previousStatus,
+        booking: toAdminBookingPayload(booking),
+      });
+    } catch (emitErr) {
+      console.warn("Trip start: realtime emit failed (non-fatal):", emitErr?.message || emitErr);
+    }
 
     return res.status(createdNewBooking ? 201 : 200).json({
       message: "Trip session started.",
@@ -835,7 +838,7 @@ export const startTripSession = async (req, res) => {
       tripSession: booking.tripSession,
     });
   } catch (error) {
-    console.error("Driver trip start error:", error);
+    console.error("Driver trip start error:", error?.message || error, error?.stack || "");
     return res.status(500).json({ message: "Server error while starting trip session." });
   }
 };
