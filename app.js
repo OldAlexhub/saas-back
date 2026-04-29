@@ -56,11 +56,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.join(__dirname, './public');
 app.use(express.static(publicDirectory));
 
-app.use(generalLimiter);
-
 app.get('/health', (_req, res) => res.status(200).json({ status: 'ok' }));
 
 app.use('/api/v1/driver-app', driverAppRouter);
+
+app.use(generalLimiter);
 app.use('/api/v1', router);
 
 app.use(notFound);
