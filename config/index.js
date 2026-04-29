@@ -35,7 +35,7 @@ const config = {
   cors: {
     origin: process.env.ALLOWED_ORIGINS
       ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
-      : ['http://localhost:3000'],
+      : ['http://localhost:3000', 'https://saas-front-r66c.onrender.com'],
   },
   mapbox: {
     token: process.env.MAPBOX_ACCESS_TOKEN,
