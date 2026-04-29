@@ -3,6 +3,16 @@ import jwt from "jsonwebtoken";
 import AdminModel from "../models/AdminSchema.js";
 import config from "../config/index.js";
 
+const getAuthCookieOptions = (overrides = {}) => {
+  const isProduction = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
+    ...overrides,
+  };
+};
+
 // LIST
 export const listAdmins = async (_req, res) => {
   try {
@@ -100,13 +110,9 @@ export const AdminLogin = async (req, res) => {
       expiresIn: config.jwt.expiresIn,
     });
 
-    const isProduction = process.env.NODE_ENV === 'production';
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: 'strict',
+    res.cookie("token", token, getAuthCookieOptions({
       maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days in ms
-    });
+    }));
 
     const name = `${user.firstName} ${user.lastName}`;
     return res.status(200).json({
@@ -122,7 +128,7 @@ export const AdminLogin = async (req, res) => {
 
 // LOGOUT
 export const AdminLogout = (_req, res) => {
-  res.clearCookie('token', { httpOnly: true, sameSite: 'strict' });
+  res.clearCookie("token", getAuthCookieOptions());
   return res.status(200).json({ message: "Logged out successfully." });
 };
 
