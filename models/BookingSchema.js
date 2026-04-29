@@ -227,7 +227,8 @@ function setPointFromLonLat(doc, prefix) {
   if (typeof lon === "number" && typeof lat === "number") {
     doc[`${prefix}Point`] = { type: "Point", coordinates: [lon, lat] };
   } else {
-    if (doc[`${prefix}Point`]) doc[`${prefix}Point`].coordinates = undefined;
+    // Clear the entire field — a Point with no coordinates is invalid for the 2dsphere index
+    doc[`${prefix}Point`] = undefined;
   }
 }
 
