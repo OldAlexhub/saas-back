@@ -19,7 +19,13 @@ export const createDriverSchema = z.object({
 });
 
 export const driverLoginSchema = z.object({
+  identifier: z.string().optional(),
   email: z.string().email('Must be a valid email.').optional(),
   driverId: z.string().optional(),
+  phoneNumber: z.string().optional(),
   password: z.string().min(1, 'Password is required.'),
-}).refine((d) => d.email || d.driverId, { message: 'email or driverId is required.' });
+  deviceId: z.string().nullable().optional(),
+  pushToken: z.string().nullable().optional(),
+}).refine((d) => d.identifier || d.email || d.driverId || d.phoneNumber, {
+  message: 'identifier, email, driverId or phoneNumber is required.',
+});
