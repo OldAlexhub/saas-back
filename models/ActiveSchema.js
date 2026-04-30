@@ -119,8 +119,10 @@ ActiveSchema.pre("save", function (next) {
   next();
 });
 
-// Geospatial index for proximity queries
-ActiveSchema.index({ currentLocation: "2dsphere" });
+// Geospatial index for proximity queries.
+// sparse: true skips documents where currentLocation is null/missing so index
+// creation doesn't fail when drivers haven't reported a location yet.
+ActiveSchema.index({ currentLocation: "2dsphere" }, { sparse: true });
 // Fast lookups by driver and cab (used in assignment and conflict checks)
 ActiveSchema.index({ driverId: 1 }, { unique: true });
 ActiveSchema.index({ cabNumber: 1 }, { unique: true });
