@@ -486,10 +486,18 @@ export const getAllActives = async (req, res) => {
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));
     const skip = (page - 1) * limit;
 
-    const [resultsRaw, total] = await Promise.all([
-      ActiveModel.find(query).skip(skip).limit(limit).lean(),
-      ActiveModel.countDocuments(query),
-    ]);
+    // $near does not support countDocuments — run count only for plain queries
+    const hasGeoQuery = !!(lat && lng && radius);
+    let resultsRaw, total;
+    if (hasGeoQuery) {
+      resultsRaw = await ActiveModel.find(query).skip(skip).limit(limit).lean();
+      total = resultsRaw.length + skip;
+    } else {
+      [resultsRaw, total] = await Promise.all([
+        ActiveModel.find(query).skip(skip).limit(limit).lean(),
+        ActiveModel.countDocuments(query),
+      ]);
+    }
 
     const driverIds = resultsRaw.map((record) => record.driverId).filter(Boolean);
     const activeTrips = driverIds.length
