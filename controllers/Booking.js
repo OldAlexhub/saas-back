@@ -161,6 +161,20 @@ function toFiniteNumber(value) {
   return Number.isFinite(num) ? num : undefined;
 }
 
+function isUsableLatLon(lat, lon) {
+  const latNum = toFiniteNumber(lat);
+  const lonNum = toFiniteNumber(lon);
+  return (
+    latNum !== undefined &&
+    lonNum !== undefined &&
+    latNum >= -90 &&
+    latNum <= 90 &&
+    lonNum >= -180 &&
+    lonNum <= 180 &&
+    !(Math.abs(latNum) < 0.0001 && Math.abs(lonNum) < 0.0001)
+  );
+}
+
 const ALLOWED_DISTANCE_SOURCES = new Set(["driving", "straight-line", "computed", "manual"]);
 
 function normalizeDistanceSource(source) {
@@ -185,14 +199,14 @@ function normalizeGeoPointInput(point, lon, lat) {
     const [lonRaw, latRaw] = point.coordinates;
     const lonNum = toFiniteNumber(lonRaw);
     const latNum = toFiniteNumber(latRaw);
-    if (lonNum !== undefined && latNum !== undefined) {
+    if (isUsableLatLon(latNum, lonNum)) {
       return { type: "Point", coordinates: [lonNum, latNum] };
     }
   }
 
   const lonNum = toFiniteNumber(lon);
   const latNum = toFiniteNumber(lat);
-  if (lonNum === undefined || latNum === undefined) return null;
+  if (!isUsableLatLon(latNum, lonNum)) return null;
   return { type: "Point", coordinates: [lonNum, latNum] };
 }
 

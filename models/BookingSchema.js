@@ -224,7 +224,15 @@ BookingSchema.index({ driverId: 1, status: 1, "tripSession.lastHeartbeatAt": -1 
 function setPointFromLonLat(doc, prefix) {
   const lon = doc[`${prefix}Lon`];
   const lat = doc[`${prefix}Lat`];
-  if (typeof lon === "number" && typeof lat === "number") {
+  const usable =
+    typeof lon === "number" &&
+    typeof lat === "number" &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lon >= -180 &&
+    lon <= 180 &&
+    !(Math.abs(lat) < 0.0001 && Math.abs(lon) < 0.0001);
+  if (usable) {
     doc[`${prefix}Point`] = { type: "Point", coordinates: [lon, lat] };
   } else {
     // Clear the entire field — a Point with no coordinates is invalid for the 2dsphere index
@@ -263,7 +271,15 @@ async function syncPointsOnUpdate(next) {
     if (lonProvided || latProvided) {
       const lon = $set[lonKey];
       const lat = $set[latKey];
-      if (typeof lon === "number" && typeof lat === "number") {
+      const usable =
+        typeof lon === "number" &&
+        typeof lat === "number" &&
+        lat >= -90 &&
+        lat <= 90 &&
+        lon >= -180 &&
+        lon <= 180 &&
+        !(Math.abs(lat) < 0.0001 && Math.abs(lon) < 0.0001);
+      if (usable) {
         $set[pointKey] = { type: "Point", coordinates: [lon, lat] };
       } else {
         if (!update.$unset) update.$unset = {};

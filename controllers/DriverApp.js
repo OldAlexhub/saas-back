@@ -128,6 +128,29 @@ function coerceNumber(value) {
   return Number.isFinite(num) ? num : undefined;
 }
 
+function isZeroCoordinatePair(lat, lon) {
+  const la = coerceNumber(lat);
+  const lo = coerceNumber(lon);
+  return la !== undefined && lo !== undefined && Math.abs(la) < 0.0001 && Math.abs(lo) < 0.0001;
+}
+
+function normalizeLatLon(lat, lon) {
+  const la = coerceNumber(lat);
+  const lo = coerceNumber(lon);
+  if (la === undefined || lo === undefined) return null;
+  if (la < -90 || la > 90 || lo < -180 || lo > 180) return null;
+  if (isZeroCoordinatePair(la, lo)) return null;
+  return { lat: la, lon: lo };
+}
+
+function hasCoordinateInput(lat, lon) {
+  return lat !== undefined || lon !== undefined;
+}
+
+function isAcceptableMissingCoordinateInput(lat, lon) {
+  return !hasCoordinateInput(lat, lon) || isZeroCoordinatePair(lat, lon);
+}
+
 function normalizeDate(value, fallback = new Date()) {
   if (!value) return fallback;
   const parsed = new Date(value);
@@ -181,12 +204,11 @@ function appendSyncIssue(booking, issue = {}) {
 
 function readEventLocation(payload = {}) {
   const coords = payload.coords || payload.location?.coords || payload.location || payload;
-  const lat = coerceNumber(coords.latitude ?? coords.lat);
-  const lng = coerceNumber(coords.longitude ?? coords.lng ?? coords.lon);
-  if (lat === undefined || lng === undefined) return null;
+  const point = normalizeLatLon(coords.latitude ?? coords.lat, coords.longitude ?? coords.lng ?? coords.lon);
+  if (!point) return null;
   return {
-    lat,
-    lng,
+    lat: point.lat,
+    lng: point.lon,
     speed: coords.speed,
     heading: coords.heading,
     accuracy: coords.accuracy,
@@ -194,15 +216,11 @@ function readEventLocation(payload = {}) {
 }
 
 function buildDriverLocationUpdate({ lat, lng, speed, heading, accuracy }) {
-  const la = Number(lat);
-  const lon = Number(lng);
-
-  if (!Number.isFinite(la) || !Number.isFinite(lon)) {
-    return null;
-  }
+  const pointCoords = normalizeLatLon(lat, lng);
+  if (!pointCoords) return null;
 
   const at = new Date();
-  const point = { type: "Point", coordinates: [lon, la] };
+  const point = { type: "Point", coordinates: [pointCoords.lon, pointCoords.lat] };
 
   const meta = {
     at,
@@ -254,6 +272,14 @@ async function persistTripLocation({ booking, driverId, locationPayload, capture
     booking.driverLocationTrail = booking.driverLocationTrail.slice(-DRIVER_LOCATION_TRAIL_MAX);
   }
 
+  const hasPickupCoords = normalizeLatLon(booking.pickupLat, booking.pickupLon);
+  const isDriverOriginTrip = booking.tripSource === "driver" || booking.dispatchMethod === "flagdown";
+  if (!hasPickupCoords && isDriverOriginTrip) {
+    booking.pickupLat = location.lat;
+    booking.pickupLon = location.lng;
+    booking.pickupPoint = { type: "Point", coordinates: [location.lng, location.lat] };
+  }
+
   try {
     await ActiveModel.updateOne(
       { driverId },
@@ -279,13 +305,12 @@ function applyDropoffData(booking, { dropoffAddress, dropoffLat, dropoffLon }) {
     booking.dropoffAddress = dropoffAddress ? String(dropoffAddress).trim() : undefined;
   }
 
-  const lat = coerceNumber(dropoffLat);
-  const lon = coerceNumber(dropoffLon);
+  const coords = normalizeLatLon(dropoffLat, dropoffLon);
 
-  if (lat !== undefined && lon !== undefined) {
-    booking.dropoffLat = lat;
-    booking.dropoffLon = lon;
-    booking.dropoffPoint = { type: "Point", coordinates: [lon, lat] };
+  if (coords) {
+    booking.dropoffLat = coords.lat;
+    booking.dropoffLon = coords.lon;
+    booking.dropoffPoint = { type: "Point", coordinates: [coords.lon, coords.lat] };
   }
 }
 
@@ -725,12 +750,8 @@ export const startTripSession = async (req, res) => {
         return res.status(400).json({ message: "passengers must be a positive number." });
       }
 
-      const pickupLatNum = coerceNumber(pickupLat);
-      const pickupLonNum = coerceNumber(pickupLon);
-      if (
-        (pickupLat !== undefined || pickupLon !== undefined) &&
-        (pickupLatNum === undefined || pickupLonNum === undefined)
-      ) {
+      const pickupCoords = normalizeLatLon(pickupLat, pickupLon);
+      if (!pickupCoords && !isAcceptableMissingCoordinateInput(pickupLat, pickupLon)) {
         return res.status(400).json({ message: "pickupLat and pickupLon must both be valid numbers." });
       }
 
@@ -739,8 +760,8 @@ export const startTripSession = async (req, res) => {
         phoneNumber: "FLAGDOWN",
         pickupAddress: pickupAddress ? String(pickupAddress).trim() : "Flagdown Pickup",
         pickupTime: now,
-        pickupLat: pickupLatNum,
-        pickupLon: pickupLonNum,
+        pickupLat: pickupCoords?.lat,
+        pickupLon: pickupCoords?.lon,
         passengers: passengersNum ? Math.max(1, Math.round(passengersNum)) : 1,
         notes: notes ? String(notes).trim() : undefined,
         status: "PickedUp",
@@ -1296,6 +1317,15 @@ export const reportBookingLocation = async (req, res) => {
       booking.driverLocationTrail = booking.driverLocationTrail.slice(-DRIVER_LOCATION_TRAIL_MAX);
     }
 
+    const hasPickupCoords = normalizeLatLon(booking.pickupLat, booking.pickupLon);
+    const isDriverOriginTrip = booking.tripSource === "driver" || booking.dispatchMethod === "flagdown";
+    if (!hasPickupCoords && isDriverOriginTrip) {
+      const [lon, lat] = update.location.coordinates;
+      booking.pickupLat = lat;
+      booking.pickupLon = lon;
+      booking.pickupPoint = { type: "Point", coordinates: [lon, lat] };
+    }
+
     booking.history.push({
       at: new Date(),
       byUserId: req.driver.driverId,
@@ -1353,21 +1383,13 @@ export const createFlagdownRide = async (req, res) => {
       return res.status(400).json({ message: "passengers must be a positive number." });
     }
 
-    const pickupLatNum = coerceNumber(pickupLat);
-    const pickupLonNum = coerceNumber(pickupLon);
-    if (
-      (pickupLat !== undefined || pickupLon !== undefined) &&
-      (pickupLatNum === undefined || pickupLonNum === undefined)
-    ) {
+    const pickupCoords = normalizeLatLon(pickupLat, pickupLon);
+    if (!pickupCoords && !isAcceptableMissingCoordinateInput(pickupLat, pickupLon)) {
       return res.status(400).json({ message: "pickupLat and pickupLon must both be valid numbers." });
     }
 
-    const dropoffLatNum = coerceNumber(dropoffLat);
-    const dropoffLonNum = coerceNumber(dropoffLon);
-    if (
-      (dropoffLat !== undefined || dropoffLon !== undefined) &&
-      (dropoffLatNum === undefined || dropoffLonNum === undefined)
-    ) {
+    const dropoffCoords = normalizeLatLon(dropoffLat, dropoffLon);
+    if (!dropoffCoords && !isAcceptableMissingCoordinateInput(dropoffLat, dropoffLon)) {
       return res.status(400).json({ message: "dropoffLat and dropoffLon must both be valid numbers." });
     }
 
@@ -1383,10 +1405,10 @@ export const createFlagdownRide = async (req, res) => {
       pickupAddress: pickupAddress ? String(pickupAddress).trim() : "Flagdown Pickup",
       pickupTime: now,
       dropoffAddress: dropoffAddress ? String(dropoffAddress).trim() : undefined,
-      pickupLat: pickupLatNum,
-      pickupLon: pickupLonNum,
-      dropoffLat: dropoffLatNum,
-      dropoffLon: dropoffLonNum,
+      pickupLat: pickupCoords?.lat,
+      pickupLon: pickupCoords?.lon,
+      dropoffLat: dropoffCoords?.lat,
+      dropoffLon: dropoffCoords?.lon,
       passengers: passengersNum ? Math.max(1, Math.round(passengersNum)) : 1,
       notes: notes ? String(notes).trim() : undefined,
       estimatedFare: estimatedFareNum,
@@ -1405,7 +1427,11 @@ export const createFlagdownRide = async (req, res) => {
       },
     });
 
-    applyDropoffData(booking, { dropoffAddress, dropoffLat: dropoffLatNum, dropoffLon: dropoffLonNum });
+    applyDropoffData(booking, {
+      dropoffAddress,
+      dropoffLat: dropoffCoords?.lat,
+      dropoffLon: dropoffCoords?.lon,
+    });
 
     booking.history.push({
       at: now,
