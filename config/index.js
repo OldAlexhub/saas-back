@@ -4,8 +4,11 @@ import path from "path";
 
 dotenv.config();
 
-const requiredKeys = ["MONGO_URL", "SECRET_WORD", "MAPBOX_ACCESS_TOKEN"];
+const requiredKeys = ["MONGO_URL", "MAPBOX_ACCESS_TOKEN"];
 const missing = requiredKeys.filter((key) => !process.env[key] || process.env[key].trim() === "");
+if (!process.env.JWT_SECRET && !process.env.SECRET_WORD) {
+  missing.push("JWT_SECRET or SECRET_WORD");
+}
 // In production we require these keys. In development/test, warn instead so local
 // startup and CI runs can proceed without a full production env configured.
 if (missing.length > 0) {
@@ -35,21 +38,29 @@ const config = {
   cors: {
     origin: process.env.ALLOWED_ORIGINS
       ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
-      : ['http://localhost:3000', 'https://saas-front-r66c.onrender.com'],
+      : ['http://localhost:3000', 'http://localhost:3002', 'https://saas-front-r66c.onrender.com'],
   },
   mapbox: {
     token: process.env.MAPBOX_ACCESS_TOKEN,
   },
   jwt: {
-    secret: process.env.SECRET_WORD,
+    secret: process.env.JWT_SECRET || process.env.SECRET_WORD,
     expiresIn: "3d",
   },
   driverJwt: {
-    secret: process.env.DRIVER_APP_SECRET || process.env.SECRET_WORD,
+    secret: process.env.DRIVER_APP_SECRET || process.env.JWT_SECRET || process.env.SECRET_WORD,
     expiresIn: process.env.DRIVER_JWT_EXPIRES_IN || "7d",
   },
   uploads: {
     vehiclesDir: uploadsDir,
+  },
+  enrollme: {
+    frontendBaseUrl: process.env.ENROLLME_FRONTEND_URL || "http://localhost:3000",
+    tokenExpirationDays: Number(process.env.ENROLLME_TOKEN_EXPIRATION_DAYS || 14),
+    jwt: {
+      secret: process.env.ENROLLME_JWT_SECRET || process.env.JWT_SECRET || process.env.SECRET_WORD,
+      expiresIn: process.env.ENROLLME_JWT_EXPIRES_IN || "3d",
+    },
   },
   diagnostics: {
     // If not set, default to enabled (true). Value may be 'true'|'false' or '1'|'0'.

@@ -7,6 +7,7 @@ import adminsRouter from "./admins.js";
 import bookingsRouter from "./bookings.js";
 import driverAppRouter from "./driverApp.js";
 import driversRouter from "./drivers.js";
+import enrollmeRouter from "./enrollme.js";
 import faresRouter from "./fares.js";
 import reportsRouter from "./reports.js";
 import vehiclesRouter from "./vehicles.js";
@@ -17,6 +18,7 @@ const router = Router();
 
 // ---- Public / pre-auth routes ----
 router.use("/admins", adminsRouter);
+router.use("/enrollme", enrollmeRouter);
 router.get("/company/profile", getCompanyProfile);
 
 // ---- Auth gate: everything below requires admin ----

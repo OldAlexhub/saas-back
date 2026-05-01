@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import config from './config/index.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import { generalLimiter } from './middleware/rateLimiter.js';
+import enrollmeRouter from './routes/enrollme.js';
 import router, { driverAppRouter } from './routes/routes.js';
 import logger from './utils/logger.js';
 
@@ -61,6 +62,7 @@ app.get('/health', (_req, res) => res.status(200).json({ status: 'ok' }));
 app.use('/api/v1/driver-app', driverAppRouter);
 
 app.use(generalLimiter);
+app.use('/api/enrollme', enrollmeRouter);
 app.use('/api/v1', router);
 
 app.use(notFound);
