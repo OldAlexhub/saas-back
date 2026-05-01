@@ -5,20 +5,24 @@ import path from "path";
 dotenv.config();
 
 const requiredKeys = ["MONGO_URL", "MAPBOX_ACCESS_TOKEN"];
-const missing = requiredKeys.filter((key) => !process.env[key] || process.env[key].trim() === "");
+const missing = requiredKeys.filter(
+  (key) => !process.env[key] || process.env[key].trim() === "",
+);
 if (!process.env.JWT_SECRET && !process.env.SECRET_WORD) {
   missing.push("JWT_SECRET or SECRET_WORD");
 }
 // In production we require these keys. In development/test, warn instead so local
 // startup and CI runs can proceed without a full production env configured.
 if (missing.length > 0) {
-  if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === "production") {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}. ` +
-        "Please define them in your environment or .env file before starting the server."
+        "Please define them in your environment or .env file before starting the server.",
     );
   } else {
-    console.warn(`Warning: missing environment variables: ${missing.join(', ')}. Continuing in non-production mode.`);
+    console.warn(
+      `Warning: missing environment variables: ${missing.join(", ")}. Continuing in non-production mode.`,
+    );
   }
 }
 
@@ -37,8 +41,15 @@ const config = {
   },
   cors: {
     origin: process.env.ALLOWED_ORIGINS
-      ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
-      : ['http://localhost:3000', 'http://localhost:3002', 'https://saas-front-r66c.onrender.com'],
+      ? process.env.ALLOWED_ORIGINS.split(",")
+          .map((o) => o.trim())
+          .filter(Boolean)
+      : [
+          "http://localhost:3000",
+          "http://localhost:3002",
+          "https://saas-front-r66c.onrender.com",
+          "https://enrollme-s1e1.onrender.com",
+        ],
   },
   mapbox: {
     token: process.env.MAPBOX_ACCESS_TOKEN,
@@ -48,17 +59,26 @@ const config = {
     expiresIn: "3d",
   },
   driverJwt: {
-    secret: process.env.DRIVER_APP_SECRET || process.env.JWT_SECRET || process.env.SECRET_WORD,
+    secret:
+      process.env.DRIVER_APP_SECRET ||
+      process.env.JWT_SECRET ||
+      process.env.SECRET_WORD,
     expiresIn: process.env.DRIVER_JWT_EXPIRES_IN || "7d",
   },
   uploads: {
     vehiclesDir: uploadsDir,
   },
   enrollme: {
-    frontendBaseUrl: process.env.ENROLLME_FRONTEND_URL || "http://localhost:3000",
-    tokenExpirationDays: Number(process.env.ENROLLME_TOKEN_EXPIRATION_DAYS || 14),
+    frontendBaseUrl:
+      process.env.ENROLLME_FRONTEND_URL || "http://localhost:3000",
+    tokenExpirationDays: Number(
+      process.env.ENROLLME_TOKEN_EXPIRATION_DAYS || 14,
+    ),
     jwt: {
-      secret: process.env.ENROLLME_JWT_SECRET || process.env.JWT_SECRET || process.env.SECRET_WORD,
+      secret:
+        process.env.ENROLLME_JWT_SECRET ||
+        process.env.JWT_SECRET ||
+        process.env.SECRET_WORD,
       expiresIn: process.env.ENROLLME_JWT_EXPIRES_IN || "3d",
     },
   },
@@ -67,7 +87,9 @@ const config = {
     enabled:
       process.env.DIAGNOSTICS_UPLOAD_ENABLED === undefined
         ? true
-        : String(process.env.DIAGNOSTICS_UPLOAD_ENABLED).trim().toLowerCase() === "true" ||
+        : String(process.env.DIAGNOSTICS_UPLOAD_ENABLED)
+            .trim()
+            .toLowerCase() === "true" ||
           String(process.env.DIAGNOSTICS_UPLOAD_ENABLED).trim() === "1",
     retentionDays: (() => {
       const v = process.env.DIAGNOSTICS_RETENTION_DAYS;
@@ -79,14 +101,21 @@ const config = {
   // Optional server-level HOS defaults (can be overridden per-company)
   hos: {
     MAX_ON_DUTY_HOURS: Number(process.env.HOS_MAX_ON_DUTY_HOURS || 12),
-    REQUIRED_OFF_DUTY_HOURS: Number(process.env.HOS_REQUIRED_OFF_DUTY_HOURS || 12),
+    REQUIRED_OFF_DUTY_HOURS: Number(
+      process.env.HOS_REQUIRED_OFF_DUTY_HOURS || 12,
+    ),
     LOOKBACK_WINDOW_HOURS: Number(process.env.HOS_LOOKBACK_WINDOW_HOURS || 24),
-    RECORD_RETENTION_MONTHS: Number(process.env.HOS_RECORD_RETENTION_MONTHS || 12),
+    RECORD_RETENTION_MONTHS: Number(
+      process.env.HOS_RECORD_RETENTION_MONTHS || 12,
+    ),
     ALLOW_ALTERNATE_RULES:
-      process.env.HOS_ALLOW_ALTERNATE_RULES === 'true' || process.env.HOS_ALLOW_ALTERNATE_RULES === '1'
+      process.env.HOS_ALLOW_ALTERNATE_RULES === "true" ||
+      process.env.HOS_ALLOW_ALTERNATE_RULES === "1"
         ? true
         : false,
-    ALERT_THRESHOLD_HOURS: Number(process.env.HOS_ALERT_THRESHOLD_HOURS || 11.5),
+    ALERT_THRESHOLD_HOURS: Number(
+      process.env.HOS_ALERT_THRESHOLD_HOURS || 11.5,
+    ),
   },
 };
 
