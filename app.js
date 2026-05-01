@@ -64,6 +64,7 @@ app.use('/api/v1/driver-app', driverAppRouter);
 app.use(generalLimiter);
 app.use('/api/enrollme', enrollmeRouter);
 app.use('/api/v1', router);
+app.use('/api', router);
 
 app.use(notFound);
 app.use(errorHandler);

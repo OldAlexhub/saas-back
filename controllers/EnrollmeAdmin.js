@@ -15,6 +15,8 @@ import EnrollmeAdmin from "../models/enrollme/EnrollmeAdmin.js";
 import EnrollmeSettings from "../models/enrollme/EnrollmeSettings.js";
 import IndependentContractorAgreementSubmission from "../models/enrollme/IndependentContractorAgreementSubmission.js";
 import TrainingAcknowledgment from "../models/enrollme/TrainingAcknowledgment.js";
+import PreventiveMaintenancePlan from "../models/enrollme/PreventiveMaintenancePlan.js";
+import VehicleInspectionRecord from "../models/enrollme/VehicleInspectionRecord.js";
 import ViolationCertificationAnnualReview from "../models/enrollme/ViolationCertificationAnnualReview.js";
 import { recordEnrollmeAudit } from "../services/enrollmeAuditService.js";
 import { assertTemplateFile, ensureDocumentTemplates } from "../services/enrollmeDocumentService.js";
@@ -38,6 +40,12 @@ function publicAdmin(admin) {
     isActive: admin.isActive,
     lastLoginAt: admin.lastLoginAt,
   };
+}
+
+function publicDriver(driver) {
+  const json = driver.toJSON ? driver.toJSON() : { ...driver };
+  delete json.onboardingTokenHash;
+  return json;
 }
 
 function buildOnboardingUrl(token) {
@@ -154,7 +162,7 @@ export async function createEnrollmeDriver(req, res) {
 
     return res.status(201).json({
       message: "Driver onboarding record created.",
-      driver: onboarding.toJSON(),
+      driver: publicDriver(onboarding),
       onboardingToken: rawToken,
       onboardingPath: `/enrollme/start/${rawToken}`,
       onboardingUrl: buildOnboardingUrl(rawToken),
@@ -358,6 +366,34 @@ export async function uploadEnrollmeDriverFile(req, res) {
     }
     driver.missingDocuments = computeMissingDocuments(driver.requiredDocuments, driver.completedDocuments);
     await driver.save();
+
+    if (req.params.documentType === "mvr") {
+      await ViolationCertificationAnnualReview.findOneAndUpdate(
+        { onboardingId: driver._id },
+        { $set: { onboardingId: driver._id, mvrUploadedFile: fileRef } },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+    }
+    if (req.params.documentType === ENROLLME_DOCUMENT_TYPES.VEHICLE_INSPECTION) {
+      await VehicleInspectionRecord.findOneAndUpdate(
+        { onboardingId: driver._id },
+        {
+          $set: {
+            onboardingId: driver._id,
+            wheelchairAccessible: Boolean(driver.configuration?.wheelchairAccessible),
+            uploadedInspectionPdf: fileRef,
+          },
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+    }
+    if (req.params.documentType === ENROLLME_DOCUMENT_TYPES.PREVENTIVE_MAINTENANCE) {
+      await PreventiveMaintenancePlan.findOneAndUpdate(
+        { onboardingId: driver._id },
+        { $setOnInsert: { onboardingId: driver._id }, $push: { receipts: fileRef } },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+    }
 
     await recordEnrollmeAudit({
       req,

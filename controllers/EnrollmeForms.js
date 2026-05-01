@@ -224,8 +224,11 @@ async function getPublicPayload(onboarding) {
   const nextQuestion = nextQuizQuestion(quiz);
   const correctIds = new Set((quiz?.answers || []).filter((answer) => answer.correct).map((answer) => answer.questionId));
 
+  const publicOnboarding = onboarding.toJSON ? onboarding.toJSON() : { ...onboarding };
+  delete publicOnboarding.onboardingTokenHash;
+
   return {
-    onboarding: onboarding.toJSON ? onboarding.toJSON() : onboarding,
+    onboarding: publicOnboarding,
     steps: ENROLLME_STEPS,
     documents: { application, agreement, training, violation },
     quiz: {
