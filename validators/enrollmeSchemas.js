@@ -93,6 +93,19 @@ export const enrollmeSettingsSchema = z.object({
 export const enrollmeSeedAdminSchema = z.object({
   name: z.string().trim().min(1),
   email: z.string().trim().toLowerCase().email(),
-  password: z.string().min(12),
+  password: z.string().min(8),
   role: z.enum(ENROLLME_ADMIN_ROLES).default("super_admin"),
+});
+
+export const enrollmeCreateAdminSchema = z.object({
+  name: z.string().trim().min(1),
+  email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(8),
+  role: z.enum(ENROLLME_ADMIN_ROLES).default("reviewer"),
+});
+
+export const enrollmeUpdateAdminSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  role: z.enum(ENROLLME_ADMIN_ROLES).optional(),
+  isActive: z.boolean().optional(),
 });

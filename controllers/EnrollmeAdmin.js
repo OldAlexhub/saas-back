@@ -515,3 +515,55 @@ export async function getEnrollmeComplianceChecklist(_req, res) {
     items: COMPLIANCE_CHECKLIST_ITEMS,
   });
 }
+
+export async function listEnrollmeAdminsController(_req, res) {
+  try {
+    const admins = await EnrollmeAdmin.find().sort({ createdAt: -1 }).lean();
+    return res.json({ admins: admins.map(publicAdmin) });
+  } catch (err) {
+    console.error("List EnrollMe admins failed:", err);
+    return res.status(500).json({ message: "Failed to fetch EnrollMe admins." });
+  }
+}
+
+export async function createEnrollmeAdminController(req, res) {
+  try {
+    const { name, email, password, role } = req.body;
+    const existing = await EnrollmeAdmin.findOne({ email });
+    if (existing) {
+      return res.status(409).json({ message: "An admin with that email already exists." });
+    }
+    const passwordHash = await bcrypt.hash(password, 12);
+    const admin = await EnrollmeAdmin.create({ name, email, passwordHash, role: role || "reviewer", isActive: true });
+    return res.status(201).json({ message: "Admin created.", admin: publicAdmin(admin) });
+  } catch (err) {
+    console.error("Create EnrollMe admin failed:", err);
+    return res.status(500).json({ message: "Failed to create EnrollMe admin." });
+  }
+}
+
+export async function updateEnrollmeAdminController(req, res) {
+  try {
+    const updates = {};
+    if (req.body.name !== undefined) updates.name = req.body.name;
+    if (req.body.role !== undefined) updates.role = req.body.role;
+    if (req.body.isActive !== undefined) updates.isActive = req.body.isActive;
+    const admin = await EnrollmeAdmin.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!admin) return res.status(404).json({ message: "Admin not found." });
+    return res.json({ admin: publicAdmin(admin) });
+  } catch (err) {
+    console.error("Update EnrollMe admin failed:", err);
+    return res.status(500).json({ message: "Failed to update EnrollMe admin." });
+  }
+}
+
+export async function deleteEnrollmeAdminController(req, res) {
+  try {
+    const admin = await EnrollmeAdmin.findByIdAndDelete(req.params.id);
+    if (!admin) return res.status(404).json({ message: "Admin not found." });
+    return res.json({ message: "Admin deleted." });
+  } catch (err) {
+    console.error("Delete EnrollMe admin failed:", err);
+    return res.status(500).json({ message: "Failed to delete EnrollMe admin." });
+  }
+}
