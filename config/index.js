@@ -48,7 +48,7 @@ const config = {
           "http://localhost:3000",
           "http://localhost:3002",
           "https://saas-front-r66c.onrender.com",
-          "https://enrollme-s1e1.onrender.com",
+          "https://enrollme-s1e1.onrender.com"
         ],
   },
   mapbox: {
