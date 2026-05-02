@@ -12,6 +12,7 @@ import IndependentContractorAgreementSubmission from "../models/enrollme/Indepen
 import TrainingAcknowledgment from "../models/enrollme/TrainingAcknowledgment.js";
 import ViolationCertificationAnnualReview from "../models/enrollme/ViolationCertificationAnnualReview.js";
 import { recordEnrollmeAudit } from "../services/enrollmeAuditService.js";
+import { encryptSensitiveValue } from "../services/enrollmeSensitiveDataService.js";
 import {
   computePacketReadiness,
   computeMissingDocuments,
@@ -113,7 +114,7 @@ async function ensureApplication(onboarding) {
       },
     },
     { new: true, upsert: true, setDefaultsOnInsert: true }
-  );
+  ).select("+applicant.ssnEncrypted");
 }
 
 async function ensureAgreement(onboarding) {
@@ -145,6 +146,15 @@ async function ensureViolation(onboarding) {
 }
 
 async function validateStepData(onboarding, step, data) {
+  if (step === "identity" && data.applicant?.ssn) {
+    const digits = String(data.applicant.ssn).replace(/\D/g, "");
+    if (digits.length < 4) {
+      const err = new Error("SSN must include at least four digits.");
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
   if (step === "employment-application" && data.license?.expirationDate && !onboarding.configuration?.allowExpiredLicenseException) {
     const expirationDate = new Date(data.license.expirationDate);
     if (!Number.isNaN(expirationDate.getTime()) && expirationDate < new Date()) {
@@ -161,6 +171,22 @@ async function validateStepData(onboarding, step, data) {
   }
 }
 
+function ssnLast4(ssn) {
+  const digits = String(ssn || "").replace(/\D/g, "");
+  return (digits || String(ssn || "")).slice(-4);
+}
+
+function applyApplicantData(application, applicant = {}) {
+  const { ssn, ...safeApplicant } = applicant || {};
+  const current = application.applicant?.toObject?.() || application.applicant || {};
+  application.applicant = { ...current, ...safeApplicant };
+
+  if (ssn) {
+    application.applicant.ssnEncrypted = encryptSensitiveValue(ssn);
+    application.applicant.ssnLast4 = ssnLast4(ssn);
+  }
+}
+
 async function applyStepData(req, onboarding, step, data = {}) {
   await validateStepData(onboarding, step, data);
 
@@ -171,7 +197,7 @@ async function applyStepData(req, onboarding, step, data = {}) {
     onboarding.email = data.applicant?.email || onboarding.email;
     onboarding.phone = data.applicant?.phone || onboarding.phone;
     const application = await ensureApplication(onboarding);
-    application.applicant = { ...application.applicant?.toObject?.(), ...data.applicant };
+    applyApplicantData(application, data.applicant);
     application.address = data.address || application.address;
     application.previousAddresses = data.previousAddresses || application.previousAddresses;
     application.metadata = metadataFromRequest(req);
@@ -181,7 +207,7 @@ async function applyStepData(req, onboarding, step, data = {}) {
   if (step === "employment-application") {
     const application = await ensureApplication(onboarding);
     application.companyInfo = data.companyInfo || application.companyInfo;
-    application.applicant = { ...application.applicant?.toObject?.(), ...data.applicant };
+    applyApplicantData(application, data.applicant);
     application.license = { ...application.license?.toObject?.(), ...data.license };
     application.drivingExperience = data.drivingExperience || application.drivingExperience;
     application.metadata = metadataFromRequest(req);

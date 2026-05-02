@@ -56,6 +56,19 @@ const DriverSchema = new mongoose.Schema(
       enum: ['pending', 'approved', 'inactive'],
       default: 'pending',
     },
+
+    // Optional source metadata for EnrollMe imports. Manual SaaS creation remains the default path.
+    source: {
+      type: String,
+      enum: ["manual", "enrollme"],
+      default: "manual",
+      index: true,
+    },
+    enrollmeSource: {
+      onboardingId: { type: mongoose.Schema.Types.ObjectId, ref: "DriverOnboarding" },
+      importedAt: { type: Date },
+      importedBy: { type: String, trim: true },
+    },
   },
   { timestamps: true }
 );
@@ -116,6 +129,7 @@ DriverSchema.index({ dotExpiry: 1 });
 DriverSchema.index({ cbiExpiry: 1 });
 DriverSchema.index({ mvrExpiry: 1 });
 DriverSchema.index({ fingerPrintsExpiry: 1 });
+DriverSchema.index({ "enrollmeSource.onboardingId": 1 }, { unique: true, sparse: true });
 
 const DriverModel = mongoose.model("Driver", DriverSchema);
 

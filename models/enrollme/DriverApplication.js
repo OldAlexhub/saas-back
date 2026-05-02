@@ -15,6 +15,7 @@ const DriverApplicationSchema = new Schema(
       email: { type: String, lowercase: true, trim: true },
       phone: { type: String, trim: true },
       dateOfBirth: { type: Date },
+      ssnEncrypted: { type: String, select: false },
       ssnLast4: { type: String, trim: true },
     },
     address: { type: Mixed, default: {} },

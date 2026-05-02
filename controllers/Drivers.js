@@ -1,78 +1,18 @@
-import bcrypt from "bcrypt";
 import DriverModel from "../models/DriverSchema.js";
-import { saveWithIdRetry } from "../utils/saveWithRetry.js";
-
-// ---- helper constants ----
-const DATE_FIELDS_EXPIRY = [
-  "dlExpiry",
-  "dotExpiry",
-  "cbiExpiry",
-  "mvrExpiry",
-  "fingerPrintsExpiry",
-];
-
-function startOfToday() {
-  const t = new Date();
-  t.setHours(0, 0, 0, 0);
-  return t;
-}
-
-function parseDateSafe(val) {
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-function sanitizeDriver(doc) {
-  if (!doc) return doc;
-  const plain = typeof doc.toObject === "function" ? doc.toObject() : { ...doc };
-  delete plain.ssn;
-  delete plain.history;
-  if (plain.driverApp) {
-    const { forcePasswordReset = false, lastLoginAt, lastLogoutAt, deviceId, pushToken } =
-      plain.driverApp;
-    plain.driverApp = {
-      forcePasswordReset: Boolean(forcePasswordReset),
-      lastLoginAt: lastLoginAt || null,
-      lastLogoutAt: lastLogoutAt || null,
-      deviceId: deviceId || null,
-      pushToken: pushToken || null,
-    };
-  }
-  return plain;
-}
-
-// ---- validation helper ----
-function validateDatesOnCreateOrUpdate(payload, { isCreate = false } = {}) {
-  const errors = [];
-  const today = startOfToday();
-
-  // --- Validate DOB (must be at least 21 years ago) ---
-  if (isCreate || payload.dob !== undefined) {
-    const dob = parseDateSafe(payload.dob);
-    if (!dob) errors.push("dob is invalid date.");
-    else {
-      const ageDifMs = today - dob;
-      const age = ageDifMs / (1000 * 60 * 60 * 24 * 365.25); // rough years
-      if (age < 21) errors.push("Driver must be at least 21 years old.");
-    }
-  }
-
-  // --- Validate expiry fields ---
-  for (const f of DATE_FIELDS_EXPIRY) {
-    if (isCreate || payload[f] !== undefined) {
-      const d = parseDateSafe(payload[f]);
-      if (!d) errors.push(`${f} is invalid date.`);
-      else if (d < today) errors.push(`${f} cannot be expired.`);
-    }
-  }
-
-  return errors;
-}
-
-async function hashSsn(ssn) {
-  if (!ssn) return null;
-  return bcrypt.hash(String(ssn), 12);
-}
+import {
+  EnrollmeDriverImportError,
+  ENROLLME_DRIVER_FIELD_MAP,
+  getEnrollmeDriverImportCandidate,
+  importEnrollmeDriverToRoster,
+  listEnrollmeDriverImportCandidates,
+} from "../services/enrollmeDriverImportService.js";
+import {
+  createDriverRecord,
+  DriverCreationError,
+  hashSsn,
+  sanitizeDriver,
+  validateDatesOnCreateOrUpdate,
+} from "../services/driverCreationService.js";
 
 // ----------------- LIST DRIVERS -----------------
 export const listDrivers = async (req, res) => {
@@ -89,6 +29,60 @@ export const listDrivers = async (req, res) => {
   } catch (error) {
     console.error("Error listing drivers:", error);
     return res.status(500).json({ message: "Server error while fetching drivers." });
+  }
+};
+
+export const listEnrollmeImportCandidates = async (req, res) => {
+  try {
+    const applications = await listEnrollmeDriverImportCandidates({
+      search: req.query.search || "",
+    });
+    return res.status(200).json({
+      count: applications.length,
+      fieldMap: ENROLLME_DRIVER_FIELD_MAP,
+      applications,
+    });
+  } catch (error) {
+    console.error("Error listing EnrollMe import candidates:", error);
+    return res.status(500).json({ message: "Server error while listing EnrollMe import candidates." });
+  }
+};
+
+export const getEnrollmeImportCandidate = async (req, res) => {
+  try {
+    const { candidate } = await getEnrollmeDriverImportCandidate(req.params.id);
+    return res.status(200).json({
+      fieldMap: ENROLLME_DRIVER_FIELD_MAP,
+      application: candidate,
+    });
+  } catch (error) {
+    if (error instanceof EnrollmeDriverImportError) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    console.error("Error loading EnrollMe import candidate:", error);
+    return res.status(500).json({ message: "Server error while loading EnrollMe import candidate." });
+  }
+};
+
+export const importEnrollmeDriver = async (req, res) => {
+  try {
+    const result = await importEnrollmeDriverToRoster(req.params.id, {
+      adminEmail: req.user?.email || "admin",
+    });
+    return res.status(201).json(result);
+  } catch (error) {
+    if (error instanceof EnrollmeDriverImportError || error instanceof DriverCreationError) {
+      return res.status(error.statusCode).json({
+        message: error.message,
+        ...(error.errors?.length ? { errors: error.errors } : {}),
+        ...(error.candidate ? { application: error.candidate } : {}),
+      });
+    }
+    if (error.code === 11000) {
+      return res.status(409).json({ message: "EnrollMe application is already linked to a SaaS driver." });
+    }
+    console.error("Error importing EnrollMe driver:", error);
+    return res.status(500).json({ message: "Server error while importing EnrollMe driver." });
   }
 };
 
@@ -120,87 +114,19 @@ export const getDriverById = async (req, res) => {
 // ----------------- ADD RECORD -----------------
 export const addDriver = async (req, res) => {
   try {
-    const {
-      firstName,
-      lastName,
-      dlNumber,
-      email,
-      dob,
-      dlExpiry,
-      dotExpiry,
-      fullAddress,
-      ssn,
-      phoneNumber,
-      cbiExpiry,
-      mvrExpiry,
-      fingerPrintsExpiry,
-    } = req.body;
-
-    // Required field check
-    if (
-      !firstName ||
-      !lastName ||
-      !dlNumber ||
-      !email ||
-      !dob ||
-      !dlExpiry ||
-      !dotExpiry ||
-      !fullAddress ||
-      !ssn ||
-      !phoneNumber ||
-      !cbiExpiry ||
-      !mvrExpiry ||
-      !fingerPrintsExpiry
-    ) {
-      return res.status(400).json({ message: "All fields are required." });
-    }
-
-    // Validate date logic
-    const dateErrors = validateDatesOnCreateOrUpdate(req.body, { isCreate: true });
-    if (dateErrors.length) {
-      return res.status(400).json({
-        message: "Invalid date(s).",
-        errors: dateErrors,
-      });
-    }
-
-    // Prevent duplicates
-    const normalizedEmail = String(email).trim().toLowerCase();
-
-    const existingDriver = await DriverModel.findOne({
-      $or: [{ email: normalizedEmail }, { dlNumber }],
-    });
-    if (existingDriver) {
-      return res
-        .status(400)
-        .json({ message: "Driver already exists with this email or license number." });
-    }
-
-    const hashedSsn = await hashSsn(ssn);
-    const payload = {
-      firstName,
-      lastName,
-      dlNumber,
-      email: normalizedEmail,
-      dob,
-      dlExpiry,
-      dotExpiry,
-      fullAddress,
-      ssn: hashedSsn,
-      ssnLast4: String(ssn).slice(-4),
-      phoneNumber,
-      cbiExpiry,
-      mvrExpiry,
-      fingerPrintsExpiry,
-    };
-
-    const driver = await saveWithIdRetry(() => DriverModel.create(payload), ['driverId']);
+    const driver = await createDriverRecord(req.body);
 
     return res.status(201).json({
       message: "Driver added successfully.",
       driver: sanitizeDriver(driver),
     });
   } catch (error) {
+    if (error instanceof DriverCreationError) {
+      return res.status(error.statusCode).json({
+        message: error.message,
+        ...(error.errors?.length ? { errors: error.errors } : {}),
+      });
+    }
     if (error.code === 11000) {
       return res.status(409).json({ message: "A driver with this email or license number already exists." });
     }
