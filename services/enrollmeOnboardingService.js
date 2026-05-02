@@ -34,12 +34,16 @@ export function buildAdminComplianceChecklist(configuration = {}, existingItems 
   return COMPLIANCE_CHECKLIST_ITEMS.map((definition) => {
     const current = existing.get(definition.key) || {};
     const required = isChecklistItemRequired(definition, configuration);
+    const previousOptionalDefault =
+      ["fingerprint_qualification", "medical_certificate"].includes(definition.key) &&
+      required &&
+      current.status === "not_applicable";
     return {
       key: definition.key,
       label: definition.label,
       category: definition.category,
       required,
-      status: current.status || (required ? "pending" : "not_applicable"),
+      status: previousOptionalDefault ? "pending" : current.status || (required ? "pending" : "not_applicable"),
       notes: current.notes || "",
       expiresAt: current.expiresAt,
       updatedBy: current.updatedBy,

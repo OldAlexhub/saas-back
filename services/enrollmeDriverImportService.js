@@ -28,12 +28,12 @@ const CHECKLIST_EXPIRY_MAP = [
   {
     driverField: "fingerPrintsExpiry",
     checklistKey: "fingerprint_qualification",
-    label: "Fingerprint expiry",
+    label: "Fingerprint Card expiry",
   },
   {
     driverField: "dotExpiry",
     checklistKey: "medical_certificate",
-    label: "DOT medical expiry",
+    label: "DOT Medical Card expiry",
   },
 ];
 
@@ -47,10 +47,10 @@ export const ENROLLME_DRIVER_FIELD_MAP = [
   { enrollme: "application.applicant.ssnEncrypted", driver: "ssn", label: "SSN" },
   { enrollme: "application.license.number", driver: "dlNumber", label: "Driver license number" },
   { enrollme: "application.license.expirationDate", driver: "dlExpiry", label: "Driver license expiry" },
-  { enrollme: "checklist.medical_certificate.expiresAt", driver: "dotExpiry", label: "DOT medical expiry" },
+  { enrollme: "checklist.medical_certificate.expiresAt", driver: "dotExpiry", label: "DOT Medical Card expiry" },
   { enrollme: "checklist.background_check.expiresAt", driver: "cbiExpiry", label: "CBI/background check expiry" },
   { enrollme: "checklist.mvr.expiresAt", driver: "mvrExpiry", label: "MVR expiry" },
-  { enrollme: "checklist.fingerprint_qualification.expiresAt", driver: "fingerPrintsExpiry", label: "Fingerprint expiry" },
+  { enrollme: "checklist.fingerprint_qualification.expiresAt", driver: "fingerPrintsExpiry", label: "Fingerprint Card expiry" },
 ];
 
 export class EnrollmeDriverImportError extends Error {
