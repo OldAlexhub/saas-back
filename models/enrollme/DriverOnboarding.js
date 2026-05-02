@@ -4,7 +4,7 @@ import {
   DEFAULT_REQUIRED_DOCUMENTS,
   DRIVER_ONBOARDING_STATUSES,
 } from "../../constants/enrollme.js";
-import { fileRefSchema } from "./sharedSchemas.js";
+import { documentReviewEventSchema, fileRefSchema } from "./sharedSchemas.js";
 
 const { Schema } = mongoose;
 
@@ -31,6 +31,25 @@ const adminNoteSchema = new Schema(
     createdAt: { type: Date, default: Date.now },
   },
   { _id: true }
+);
+
+const adminComplianceChecklistSchema = new Schema(
+  {
+    key: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+    category: { type: String, trim: true },
+    required: { type: Boolean, default: false },
+    status: {
+      type: String,
+      enum: ["not_applicable", "pending", "received_externally", "verified", "expired", "needs_correction"],
+      default: "pending",
+    },
+    notes: { type: String, trim: true },
+    expiresAt: { type: Date },
+    updatedBy: { type: Schema.Types.ObjectId, ref: "EnrollmeAdmin" },
+    updatedAt: { type: Date },
+  },
+  { _id: false }
 );
 
 const DriverOnboardingSchema = new Schema(
@@ -64,6 +83,9 @@ const DriverOnboardingSchema = new Schema(
     },
     adminNotes: { type: [adminNoteSchema], default: [] },
     correctionRequests: { type: [correctionRequestSchema], default: [] },
+    adminComplianceChecklist: { type: [adminComplianceChecklistSchema], default: [] },
+    documentReviewEvents: { type: [documentReviewEventSchema], default: [] },
+    // Retained only for legacy data visibility/migration. EnrollMe routes no longer accept file uploads.
     uploadedFiles: { type: [fileRefSchema], default: [] },
     createdBy: { type: Schema.Types.ObjectId, ref: "EnrollmeAdmin" },
     reviewedBy: { type: Schema.Types.ObjectId, ref: "EnrollmeAdmin" },

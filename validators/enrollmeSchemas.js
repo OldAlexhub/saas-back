@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  ADMIN_COMPLIANCE_CHECKLIST_STATUSES,
   DEFAULT_OPTIONAL_DOCUMENTS,
   DEFAULT_REQUIRED_DOCUMENTS,
   DRIVER_ONBOARDING_STATUSES,
@@ -57,12 +58,34 @@ export const enrollmeSaveStepSchema = z.object({
 
 export const enrollmeSignatureSchema = z.object({
   documentType: z.string().trim().min(1),
+  documentTitle: z.string().trim().min(1),
+  documentVersion: z.string().trim().min(1),
+  effectiveDate: optionalString,
+  generatedAt: z.string().trim().min(1),
+  reviewedAt: z.string().trim().min(1),
+  dataSnapshot: z.any().optional(),
+  contentSnapshot: z.string().trim().min(20),
+  contentHash: z.string().trim().min(8),
   signerName: z.string().trim().min(1),
   typedSignature: optionalString,
   drawnSignature: optionalString,
   acknowledgmentText: z.string().trim().min(1),
+  electronicSignatureConsent: z.literal(true),
   accepted: z.literal(true),
+  step: z.string().trim().optional(),
   data: z.record(z.string(), z.any()).optional().default({}),
+});
+
+export const enrollmeDocumentReviewSchema = z.object({
+  documentType: z.string().trim().min(1),
+  documentTitle: z.string().trim().min(1),
+  documentVersion: z.string().trim().min(1),
+  effectiveDate: optionalString,
+  generatedAt: z.string().trim().min(1),
+  reviewedAt: z.string().trim().min(1),
+  dataSnapshot: z.any().optional(),
+  contentSnapshot: z.string().trim().min(20),
+  contentHash: z.string().trim().min(8),
 });
 
 export const enrollmeQuizAnswerSchema = z.object({
@@ -71,6 +94,15 @@ export const enrollmeQuizAnswerSchema = z.object({
 });
 
 export const enrollmeFinalAcknowledgmentSchema = z.object({
+  documentType: z.string().trim().min(1),
+  documentTitle: z.string().trim().min(1),
+  documentVersion: z.string().trim().min(1),
+  effectiveDate: optionalString,
+  generatedAt: z.string().trim().min(1),
+  reviewedAt: z.string().trim().min(1),
+  dataSnapshot: z.any().optional(),
+  contentSnapshot: z.string().trim().min(20),
+  contentHash: z.string().trim().min(8),
   acknowledgmentText: z.string().trim().min(1),
   confirmsReviewedAgreement: z.literal(true),
   confirmsCompletedQuiz: z.literal(true),
@@ -80,6 +112,7 @@ export const enrollmeFinalAcknowledgmentSchema = z.object({
   signerName: z.string().trim().min(1),
   typedSignature: optionalString,
   drawnSignature: optionalString,
+  electronicSignatureConsent: z.literal(true),
 });
 
 export const enrollmeSettingsSchema = z.object({
@@ -108,4 +141,11 @@ export const enrollmeUpdateAdminSchema = z.object({
   name: z.string().trim().min(1).optional(),
   role: z.enum(ENROLLME_ADMIN_ROLES).optional(),
   isActive: z.boolean().optional(),
+});
+
+export const enrollmeAdminChecklistSchema = z.object({
+  key: z.string().trim().min(1),
+  status: z.enum(ADMIN_COMPLIANCE_CHECKLIST_STATUSES),
+  notes: optionalString,
+  expiresAt: optionalString,
 });

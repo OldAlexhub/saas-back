@@ -1,8 +1,4 @@
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { Router } from "express";
-import multer from "multer";
 import {
   addEnrollmeDriverNote,
   createEnrollmeDriver,
@@ -19,13 +15,14 @@ import {
   listEnrollmeDocuments,
   listEnrollmeDrivers,
   requestEnrollmeCorrection,
+  updateEnrollmeAdminChecklistItem,
   updateEnrollmeDriverStatus,
   updateEnrollmeSettings,
-  uploadEnrollmeDriverFile,
 } from "../controllers/EnrollmeAdmin.js";
 import {
   answerEnrollmeQuizQuestion,
   getEnrollmeFormByToken,
+  reviewEnrollmeDocument,
   saveEnrollmeStep,
   signEnrollmeDocument,
   signTrainingAcknowledgment,
@@ -36,9 +33,11 @@ import { authenticateEnrollmeAdmin, requireEnrollmeRole } from "../middleware/en
 import { authLimiter } from "../middleware/rateLimiter.js";
 import { validate } from "../middleware/validate.js";
 import {
+  enrollmeAdminChecklistSchema,
   enrollmeAdminLoginSchema,
   enrollmeCorrectionSchema,
   enrollmeCreateDriverSchema,
+  enrollmeDocumentReviewSchema,
   enrollmeFinalAcknowledgmentSchema,
   enrollmeNoteSchema,
   enrollmeQuizAnswerSchema,
@@ -48,40 +47,6 @@ import {
   enrollmeStatusSchema,
 } from "../validators/enrollmeSchemas.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadDir = path.resolve(__dirname, "../public/uploads/enrollme");
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => {
-    const safeBase = path
-      .basename(file.originalname, path.extname(file.originalname))
-      .replace(/[^a-z0-9]+/gi, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 60);
-    cb(null, `${Date.now()}-${safeBase || "upload"}${path.extname(file.originalname).toLowerCase()}`);
-  },
-});
-
-const allowedUploadTypes = new Set([
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    if (!allowedUploadTypes.has(file.mimetype)) {
-      return cb(new Error("Only PDF, JPG, PNG, and WEBP uploads are allowed."));
-    }
-    return cb(null, true);
-  },
-});
-
 const router = Router();
 
 router.post("/admin/login", authLimiter, validate(enrollmeAdminLoginSchema), enrollmeAdminLogin);
@@ -89,6 +54,7 @@ router.post("/admin/login", authLimiter, validate(enrollmeAdminLoginSchema), enr
 router.get("/forms/:token", getEnrollmeFormByToken);
 router.post("/forms/:token/save-step", validate(enrollmeSaveStepSchema), saveEnrollmeStep);
 router.post("/forms/:token/submit-step", validate(enrollmeSaveStepSchema), submitEnrollmeStep);
+router.post("/forms/:token/review-document", validate(enrollmeDocumentReviewSchema), reviewEnrollmeDocument);
 router.post("/forms/:token/sign", validate(enrollmeSignatureSchema), signEnrollmeDocument);
 router.post("/forms/:token/quiz/answer", validate(enrollmeQuizAnswerSchema), answerEnrollmeQuizQuestion);
 router.post(
@@ -129,11 +95,11 @@ router.post(
   validate(enrollmeNoteSchema),
   addEnrollmeDriverNote
 );
-router.post(
-  "/admin/drivers/:id/uploads/:documentType",
+router.patch(
+  "/admin/drivers/:id/admin-checklist",
   requireEnrollmeRole("super_admin", "compliance_manager", "reviewer"),
-  upload.single("file"),
-  uploadEnrollmeDriverFile
+  validate(enrollmeAdminChecklistSchema),
+  updateEnrollmeAdminChecklistItem
 );
 router.get("/admin/drivers/:id/download/:documentType", downloadEnrollmeDriverDocument);
 router.get("/admin/drivers/:id/download-all", downloadEnrollmeDriverPacket);

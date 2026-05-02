@@ -2,7 +2,7 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import path from "path";
 import config from "../config/index.js";
-import { COMPLIANCE_CHECKLIST_ITEMS, ENROLLME_DOCUMENT_TYPES } from "../constants/enrollme.js";
+import { COMPLIANCE_CHECKLIST_ITEMS } from "../constants/enrollme.js";
 import {
   ENROLLME_ADMIN_COOKIE,
   getEnrollmeAuthCookieOptions,
@@ -15,15 +15,16 @@ import EnrollmeAdmin from "../models/enrollme/EnrollmeAdmin.js";
 import EnrollmeSettings from "../models/enrollme/EnrollmeSettings.js";
 import IndependentContractorAgreementSubmission from "../models/enrollme/IndependentContractorAgreementSubmission.js";
 import TrainingAcknowledgment from "../models/enrollme/TrainingAcknowledgment.js";
-import PreventiveMaintenancePlan from "../models/enrollme/PreventiveMaintenancePlan.js";
-import VehicleInspectionRecord from "../models/enrollme/VehicleInspectionRecord.js";
 import ViolationCertificationAnnualReview from "../models/enrollme/ViolationCertificationAnnualReview.js";
 import { recordEnrollmeAudit } from "../services/enrollmeAuditService.js";
 import { assertTemplateFile, ensureDocumentTemplates } from "../services/enrollmeDocumentService.js";
 import {
+  buildAdminComplianceChecklist,
   buildRequiredDocumentsFromConfiguration,
+  computePacketReadiness,
   computeMissingDocuments,
   getEnrollmeSettings,
+  refreshOnboardingReadiness,
 } from "../services/enrollmeOnboardingService.js";
 import {
   generateEnrollmeDocumentPdf,
@@ -45,6 +46,8 @@ function publicAdmin(admin) {
 function publicDriver(driver) {
   const json = driver.toJSON ? driver.toJSON() : { ...driver };
   delete json.onboardingTokenHash;
+  json.adminComplianceChecklist = buildAdminComplianceChecklist(json.configuration, json.adminComplianceChecklist);
+  json.packetReadiness = computePacketReadiness(json);
   return json;
 }
 
@@ -147,6 +150,7 @@ export async function createEnrollmeDriver(req, res) {
       completedDocuments: [],
       missingDocuments: docs.requiredDocuments,
       configuration,
+      adminComplianceChecklist: buildAdminComplianceChecklist(configuration),
       createdBy: req.enrollmeAdmin.id,
     });
 
@@ -156,7 +160,7 @@ export async function createEnrollmeDriver(req, res) {
       actorType: "admin",
       actorAdminId: req.enrollmeAdmin.id,
       actorLabel: req.enrollmeAdmin.email,
-      action: "admin_created_onboarding",
+      action: "onboarding_created",
       metadata: { tokenExpirationDays, requiredDocuments: docs.requiredDocuments },
     });
 
@@ -193,7 +197,7 @@ export async function listEnrollmeDrivers(req, res) {
     }
 
     const drivers = await DriverOnboarding.find(query).sort({ updatedAt: -1 }).limit(250).lean({ virtuals: true });
-    return res.status(200).json({ count: drivers.length, drivers });
+    return res.status(200).json({ count: drivers.length, drivers: drivers.map(publicDriver) });
   } catch (err) {
     console.error("List EnrollMe drivers failed:", err);
     return res.status(500).json({ message: "Server error while listing drivers." });
@@ -202,15 +206,17 @@ export async function listEnrollmeDrivers(req, res) {
 
 export async function getEnrollmeDashboard(req, res) {
   try {
-    const [statusCounts, total, missingDocuments, expiringTokens, recentSubmissions] = await Promise.all([
+    const [statusCounts, total, expiringTokens, recentSubmissions, allDrivers] = await Promise.all([
       DriverOnboarding.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
       DriverOnboarding.countDocuments(),
-      DriverOnboarding.countDocuments({ missingDocuments: { $exists: true, $ne: [] } }),
       DriverOnboarding.countDocuments({
         tokenExpiresAt: { $gte: new Date(), $lte: addDays(new Date(), 3) },
         status: { $in: ["invited", "in_progress", "correction_requested"] },
       }),
       DriverOnboarding.find({ submittedAt: { $exists: true } }).sort({ submittedAt: -1 }).limit(8).lean({ virtuals: true }),
+      DriverOnboarding.find({ status: { $nin: ["archived", "rejected"] } })
+        .select("requiredDocuments completedDocuments adminComplianceChecklist configuration")
+        .lean({ virtuals: true }),
     ]);
 
     const byStatus = statusCounts.reduce((acc, item) => {
@@ -218,12 +224,17 @@ export async function getEnrollmeDashboard(req, res) {
       return acc;
     }, {});
 
+    const readinessRows = allDrivers.map((driver) => computePacketReadiness(driver));
+    const recordsWithAdminItemsPending = readinessRows.filter((readiness) => readiness.adminItemsPending.length > 0).length;
+    const driverMissingDocuments = readinessRows.filter((readiness) => readiness.missingDriverDocuments.length > 0).length;
+
     return res.status(200).json({
       total,
       byStatus,
-      missingDocuments,
+      driverMissingDocuments,
       expiringTokens,
-      recentSubmissions,
+      recordsWithAdminItemsPending,
+      recentSubmissions: recentSubmissions.map(publicDriver),
     });
   } catch (err) {
     console.error("EnrollMe dashboard failed:", err);
@@ -247,7 +258,7 @@ export async function getEnrollmeDriver(req, res) {
     if (!driver) return res.status(404).json({ message: "Driver onboarding record not found." });
 
     return res.status(200).json({
-      driver,
+      driver: publicDriver(driver),
       documents: { application, agreement, quiz, training, violation },
       auditLogs,
     });
@@ -262,10 +273,30 @@ export async function updateEnrollmeDriverStatus(req, res) {
     const driver = await DriverOnboarding.findById(req.params.id);
     if (!driver) return res.status(404).json({ message: "Driver onboarding record not found." });
 
+    driver.adminComplianceChecklist = buildAdminComplianceChecklist(driver.configuration, driver.adminComplianceChecklist);
+    driver.missingDocuments = computeMissingDocuments(driver.requiredDocuments, driver.completedDocuments);
+    const readiness = computePacketReadiness(driver);
+    const requestedStatus = req.body.status;
+
+    if (["government_ready", "approved_to_operate"].includes(requestedStatus) && !readiness.governmentReady) {
+      return res.status(400).json({
+        message: "Packet is not government-ready. Complete driver-required documents and verify required admin checklist items first.",
+        readiness,
+      });
+    }
+
+    if (["admin_review_pending", "admin_items_pending"].includes(requestedStatus) && !readiness.driverSideComplete) {
+      return res.status(400).json({
+        message: "Driver-side packet is not complete yet.",
+        readiness,
+      });
+    }
+
+    const previousStatus = driver.status;
     driver.status = req.body.status;
     driver.reviewedBy = req.enrollmeAdmin.id;
 
-    if (req.body.status === "approved") {
+    if (req.body.status === "approved_to_operate") {
       driver.approvedBy = req.enrollmeAdmin.id;
       driver.approvedAt = new Date();
     }
@@ -282,15 +313,49 @@ export async function updateEnrollmeDriverStatus(req, res) {
       actorType: "admin",
       actorAdminId: req.enrollmeAdmin.id,
       actorLabel: req.enrollmeAdmin.email,
-      action: `admin_set_status_${req.body.status}`,
-      metadata: { note: req.body.note },
+      action: "status_changed",
+      metadata: { note: req.body.note, previousStatus, status: req.body.status },
     });
 
-    return res.status(200).json({ message: "Status updated.", driver });
+    return res.status(200).json({ message: "Status updated.", driver: publicDriver(driver) });
   } catch (err) {
     console.error("Update EnrollMe status failed:", err);
     return res.status(500).json({ message: "Server error while updating status." });
   }
+}
+
+function correctionTargets(fields = []) {
+  const documentTypes = new Set();
+  const steps = [];
+  for (const field of fields) {
+    if (["driver_application", "license_data"].includes(field)) {
+      documentTypes.add("driver_application");
+      steps.push("employment-application");
+    }
+    if (field === "employment_history") {
+      documentTypes.add("driver_application");
+      steps.push("employment-history");
+    }
+    if (field === "accident_violation_history") {
+      documentTypes.add("violation_certification_annual_review");
+      steps.push("accident-violation-history");
+    }
+    if (field === "independent_contractor_agreement_data") {
+      documentTypes.add("independent_contractor_agreement");
+      steps.push("agreement");
+    }
+    if (field === "signature_issue") {
+      documentTypes.add("driver_application");
+      documentTypes.add("independent_contractor_agreement");
+      steps.push("employment-history");
+    }
+    if (field === "training_quiz_issue") {
+      documentTypes.add("agreement_quiz");
+      documentTypes.add("training_acknowledgment");
+      steps.push("quiz");
+    }
+  }
+  return { documentTypes: [...documentTypes], step: steps[0] || "identity" };
 }
 
 export async function requestEnrollmeCorrection(req, res) {
@@ -298,7 +363,13 @@ export async function requestEnrollmeCorrection(req, res) {
     const driver = await DriverOnboarding.findById(req.params.id);
     if (!driver) return res.status(404).json({ message: "Driver onboarding record not found." });
 
+    const targets = correctionTargets(req.body.fields || []);
     driver.status = "correction_requested";
+    driver.currentStep = targets.step;
+    if (targets.documentTypes.length) {
+      driver.completedDocuments = driver.completedDocuments.filter((item) => !targets.documentTypes.includes(item));
+      driver.missingDocuments = computeMissingDocuments(driver.requiredDocuments, driver.completedDocuments);
+    }
     driver.correctionRequests.push({
       message: req.body.message,
       fields: req.body.fields || [],
@@ -312,11 +383,11 @@ export async function requestEnrollmeCorrection(req, res) {
       actorType: "admin",
       actorAdminId: req.enrollmeAdmin.id,
       actorLabel: req.enrollmeAdmin.email,
-      action: "admin_requested_correction",
-      metadata: { message: req.body.message, fields: req.body.fields || [] },
+      action: "correction_requested",
+      metadata: { message: req.body.message, fields: req.body.fields || [], reopenedStep: driver.currentStep },
     });
 
-    return res.status(200).json({ message: "Correction requested.", driver });
+    return res.status(200).json({ message: "Correction requested.", driver: publicDriver(driver) });
   } catch (err) {
     console.error("Request EnrollMe correction failed:", err);
     return res.status(500).json({ message: "Server error while requesting correction." });
@@ -335,65 +406,31 @@ export async function addEnrollmeDriverNote(req, res) {
       actorType: "admin",
       actorAdminId: req.enrollmeAdmin.id,
       actorLabel: req.enrollmeAdmin.email,
-      action: "admin_added_note",
+      action: "admin_note_added",
     });
-    return res.status(201).json({ message: "Note added.", driver });
+    return res.status(201).json({ message: "Note added.", driver: publicDriver(driver) });
   } catch (err) {
     console.error("Add EnrollMe note failed:", err);
     return res.status(500).json({ message: "Server error while adding note." });
   }
 }
 
-export async function uploadEnrollmeDriverFile(req, res) {
+export async function updateEnrollmeAdminChecklistItem(req, res) {
   try {
     const driver = await DriverOnboarding.findById(req.params.id);
     if (!driver) return res.status(404).json({ message: "Driver onboarding record not found." });
-    if (!req.file) return res.status(400).json({ message: "File is required." });
+    driver.adminComplianceChecklist = buildAdminComplianceChecklist(driver.configuration, driver.adminComplianceChecklist);
+    const item = driver.adminComplianceChecklist.find((entry) => entry.key === req.body.key);
+    if (!item) return res.status(404).json({ message: "Admin checklist item not found." });
 
-    const fileRef = {
-      originalName: req.file.originalname,
-      storedName: req.file.filename,
-      path: req.file.path,
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-      uploadedBy: req.enrollmeAdmin.id,
-      documentType: req.params.documentType,
-      notes: req.body?.notes,
-    };
-    driver.uploadedFiles.push(fileRef);
-    if (!driver.completedDocuments.includes(req.params.documentType)) {
-      driver.completedDocuments.push(req.params.documentType);
-    }
-    driver.missingDocuments = computeMissingDocuments(driver.requiredDocuments, driver.completedDocuments);
+    item.status = req.body.status;
+    item.notes = req.body.notes || "";
+    item.expiresAt = req.body.expiresAt || undefined;
+    item.updatedBy = req.enrollmeAdmin.id;
+    item.updatedAt = new Date();
     await driver.save();
 
-    if (req.params.documentType === "mvr") {
-      await ViolationCertificationAnnualReview.findOneAndUpdate(
-        { onboardingId: driver._id },
-        { $set: { onboardingId: driver._id, mvrUploadedFile: fileRef } },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
-      );
-    }
-    if (req.params.documentType === ENROLLME_DOCUMENT_TYPES.VEHICLE_INSPECTION) {
-      await VehicleInspectionRecord.findOneAndUpdate(
-        { onboardingId: driver._id },
-        {
-          $set: {
-            onboardingId: driver._id,
-            wheelchairAccessible: Boolean(driver.configuration?.wheelchairAccessible),
-            uploadedInspectionPdf: fileRef,
-          },
-        },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
-      );
-    }
-    if (req.params.documentType === ENROLLME_DOCUMENT_TYPES.PREVENTIVE_MAINTENANCE) {
-      await PreventiveMaintenancePlan.findOneAndUpdate(
-        { onboardingId: driver._id },
-        { $setOnInsert: { onboardingId: driver._id }, $push: { receipts: fileRef } },
-        { new: true, upsert: true, setDefaultsOnInsert: true }
-      );
-    }
+    const refreshed = await refreshOnboardingReadiness(driver._id);
 
     await recordEnrollmeAudit({
       req,
@@ -401,15 +438,14 @@ export async function uploadEnrollmeDriverFile(req, res) {
       actorType: "admin",
       actorAdminId: req.enrollmeAdmin.id,
       actorLabel: req.enrollmeAdmin.email,
-      action: "admin_uploaded_document",
-      documentType: req.params.documentType,
-      metadata: { originalName: req.file.originalname, size: req.file.size },
+      action: "admin_checklist_updated",
+      metadata: { key: req.body.key, status: req.body.status, notes: req.body.notes },
     });
 
-    return res.status(201).json({ message: "File uploaded.", file: fileRef, driver });
+    return res.status(200).json({ message: "Admin checklist updated.", driver: publicDriver(refreshed || driver) });
   } catch (err) {
-    console.error("Upload EnrollMe file failed:", err);
-    return res.status(500).json({ message: "Server error while uploading file." });
+    console.error("Update EnrollMe admin checklist failed:", err);
+    return res.status(500).json({ message: "Server error while updating admin checklist." });
   }
 }
 
@@ -446,7 +482,7 @@ export async function downloadEnrollmeDriverDocument(req, res) {
       actorType: "admin",
       actorAdminId: req.enrollmeAdmin.id,
       actorLabel: req.enrollmeAdmin.email,
-      action: "admin_downloaded_document",
+      action: "packet_downloaded",
       documentType,
     });
     return res.end(buffer);
@@ -464,7 +500,7 @@ export async function downloadEnrollmeDriverPacket(req, res) {
       actorType: "admin",
       actorAdminId: req.enrollmeAdmin.id,
       actorLabel: req.enrollmeAdmin.email,
-      action: "admin_downloaded_packet",
+      action: "packet_downloaded",
     });
     return streamEnrollmePacketZip(res, req.params.id);
   } catch (err) {

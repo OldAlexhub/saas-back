@@ -1,12 +1,13 @@
 import archiver from "archiver";
 import PDFDocument from "pdfkit";
-import { AGREEMENT_QUIZ_QUESTIONS, ENROLLME_DOCUMENT_TYPES } from "../constants/enrollme.js";
+import { AGREEMENT_QUIZ_QUESTIONS, DOCUMENT_TEMPLATE_DEFINITIONS, ENROLLME_DOCUMENT_TYPES } from "../constants/enrollme.js";
 import AgreementQuizAttempt from "../models/enrollme/AgreementQuizAttempt.js";
 import DriverApplication from "../models/enrollme/DriverApplication.js";
 import DriverOnboarding from "../models/enrollme/DriverOnboarding.js";
 import IndependentContractorAgreementSubmission from "../models/enrollme/IndependentContractorAgreementSubmission.js";
 import TrainingAcknowledgment from "../models/enrollme/TrainingAcknowledgment.js";
 import ViolationCertificationAnnualReview from "../models/enrollme/ViolationCertificationAnnualReview.js";
+import { computePacketReadiness } from "./enrollmeOnboardingService.js";
 
 function fullName(onboarding) {
   return [onboarding.driverFirstName, onboarding.driverMiddleName, onboarding.driverLastName].filter(Boolean).join(" ");
@@ -26,6 +27,53 @@ function labelize(key) {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^./, (char) => char.toUpperCase());
+}
+
+function documentTitle(documentType) {
+  return DOCUMENT_TEMPLATE_DEFINITIONS.find((item) => item.documentType === documentType)?.title || labelize(documentType);
+}
+
+function signatureForDocument(packet, documentType) {
+  if (documentType === ENROLLME_DOCUMENT_TYPES.DRIVER_APPLICATION) return packet.application?.applicantSignature;
+  if (documentType === ENROLLME_DOCUMENT_TYPES.INDEPENDENT_CONTRACTOR_AGREEMENT) return packet.agreement?.driverSignature;
+  if (documentType === ENROLLME_DOCUMENT_TYPES.AGREEMENT_QUIZ) return packet.quiz?.driverSignature;
+  if (documentType === ENROLLME_DOCUMENT_TYPES.TRAINING_ACKNOWLEDGMENT) return packet.training?.driverSignature;
+  if (documentType === ENROLLME_DOCUMENT_TYPES.VIOLATION_CERTIFICATION) return packet.violation?.driverSignature;
+  return null;
+}
+
+function buildPacketIndex(packet) {
+  const readiness = computePacketReadiness(packet.onboarding);
+  const completed = new Set(packet.onboarding.completedDocuments || []);
+  const required = new Set(packet.onboarding.requiredDocuments || []);
+  const rows = [...required].map((documentType) => {
+    const signature = signatureForDocument(packet, documentType);
+    return {
+      documentName: documentTitle(documentType),
+      requiredOrConditional: required.has(documentType) ? "Required" : "Conditional",
+      driverCompleted: completed.has(documentType),
+      driverSigned: Boolean(signature?.signedAt),
+      adminVerified: "Generated driver-side record",
+      status: completed.has(documentType) ? "Driver complete" : "Missing",
+      timestamp: signature?.signedAt || signature?.reviewedAt,
+      notes: signature?.contentHash ? `Hash: ${signature.contentHash}` : "",
+    };
+  });
+
+  readiness.checklist.forEach((item) => {
+    rows.push({
+      documentName: item.label,
+      requiredOrConditional: item.required ? "Required admin-managed" : "Conditional / not applicable unless enabled",
+      driverCompleted: "Admin-managed outside app",
+      driverSigned: false,
+      adminVerified: item.status === "verified",
+      status: labelize(item.status),
+      timestamp: item.updatedAt,
+      notes: item.notes || "",
+    });
+  });
+
+  return rows;
 }
 
 function renderValue(doc, key, value, depth = 0) {
@@ -173,10 +221,12 @@ export async function generateEnrollmeDocumentPdf(onboardingId, documentType) {
             score: quiz?.score,
             completedAt: quiz?.completedAt,
             attempts: quiz?.attempts,
+            signedAt: quiz?.signedAt,
           },
         },
         { title: "Answers", data: quiz?.answers },
         { title: "Wrong Answer History", data: quiz?.wrongAnswers },
+        { title: "Quiz Acknowledgment Signature", data: quiz?.driverSignature },
         { title: "Question Bank Version", data: AGREEMENT_QUIZ_QUESTIONS.map((q) => ({ id: q.id, section: q.section })) },
       ]);
 
@@ -210,13 +260,29 @@ export async function generateEnrollmeDocumentPdf(onboardingId, documentType) {
 export async function generateEnrollmePacketPdf(onboardingId) {
   const packet = await loadPacket(onboardingId);
   const { onboarding, application, agreement, quiz, training, violation } = packet;
+  const onboardingSummary = { ...onboarding };
+  delete onboardingSummary.uploadedFiles;
+  delete onboardingSummary.onboardingTokenHash;
   return createPdfBuffer("Driver Onboarding Packet", onboarding, [
-    { title: "Onboarding Summary", data: onboarding },
+    { title: "Packet Index and Checklist", data: buildPacketIndex(packet) },
+    { title: "Onboarding Summary", data: onboardingSummary },
     { title: "Driver Employment Application", data: application },
     { title: "Independent Contractor Agreement Submission", data: agreement },
     { title: "Agreement Quiz Attempt", data: quiz },
     { title: "Training and Policy Acknowledgment", data: training },
     { title: "Record of Violation + Annual Review", data: violation },
+  ]);
+}
+
+export async function generateEnrollmePacketIndexPdf(onboardingId) {
+  const packet = await loadPacket(onboardingId);
+  const onboardingSummary = { ...packet.onboarding };
+  delete onboardingSummary.uploadedFiles;
+  delete onboardingSummary.onboardingTokenHash;
+  return createPdfBuffer("Government-Ready Packet Index", packet.onboarding, [
+    { title: "Packet Index and Checklist", data: buildPacketIndex(packet) },
+    { title: "Readiness Summary", data: computePacketReadiness(packet.onboarding) },
+    { title: "Onboarding Record", data: onboardingSummary },
   ]);
 }
 
@@ -250,6 +316,9 @@ export async function streamEnrollmePacketZip(res, onboardingId) {
     const buffer = await generateEnrollmeDocumentPdf(onboardingId, documentType);
     archive.append(buffer, { name: `${documentType}.pdf` });
   }
+
+  const packetIndex = await generateEnrollmePacketIndexPdf(onboardingId);
+  archive.append(packetIndex, { name: "government_ready_packet_index.pdf" });
 
   const packet = await generateEnrollmePacketPdf(onboardingId);
   archive.append(packet, { name: "driver_packet.pdf" });

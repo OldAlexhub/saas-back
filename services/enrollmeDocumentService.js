@@ -24,7 +24,7 @@ export async function ensureDocumentTemplates() {
   for (const definition of DOCUMENT_TEMPLATE_DEFINITIONS) {
     const template = await DocumentTemplate.findOneAndUpdate(
       { documentType: definition.documentType },
-      { $setOnInsert: definition, $set: { active: true } },
+      { $set: { ...definition, active: true } },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
     templates.push(template);

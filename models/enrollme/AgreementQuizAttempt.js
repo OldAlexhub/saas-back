@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { AGREEMENT_VERSION } from "../../constants/enrollme.js";
+import { signatureSchema } from "./sharedSchemas.js";
 
 const { Schema } = mongoose;
 const Mixed = Schema.Types.Mixed;
@@ -26,6 +27,9 @@ const AgreementQuizAttemptSchema = new Schema(
     score: { type: Number, default: 0 },
     completedAt: { type: Date },
     attempts: { type: Number, default: 0 },
+    acknowledgmentText: { type: String, trim: true },
+    driverSignature: signatureSchema,
+    signedAt: { type: Date },
   },
   { timestamps: true }
 );

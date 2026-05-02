@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 
 const { Schema } = mongoose;
+const Mixed = Schema.Types.Mixed;
 
 export const signatureSchema = new Schema(
   {
@@ -12,10 +13,36 @@ export const signatureSchema = new Schema(
     userAgent: { type: String, trim: true },
     device: { type: String, trim: true },
     documentVersion: { type: String, trim: true },
+    documentType: { type: String, trim: true },
+    documentTitle: { type: String, trim: true },
+    effectiveDate: { type: Date },
+    generatedAt: { type: Date },
+    reviewedAt: { type: Date },
     acknowledgmentText: { type: String, trim: true },
+    electronicSignatureConsent: { type: Boolean, default: false },
+    dataSnapshot: { type: Mixed },
+    contentSnapshot: { type: String },
+    contentHash: { type: String, trim: true },
     accepted: { type: Boolean, default: false },
   },
   { _id: false }
+);
+
+export const documentReviewEventSchema = new Schema(
+  {
+    documentType: { type: String, required: true, trim: true },
+    documentTitle: { type: String, trim: true },
+    documentVersion: { type: String, trim: true },
+    effectiveDate: { type: Date },
+    generatedAt: { type: Date },
+    reviewedAt: { type: Date, default: Date.now },
+    dataSnapshot: { type: Mixed },
+    contentSnapshot: { type: String },
+    contentHash: { type: String, trim: true },
+    ipAddress: { type: String, trim: true },
+    userAgent: { type: String, trim: true },
+  },
+  { _id: true }
 );
 
 export const fileRefSchema = new Schema(

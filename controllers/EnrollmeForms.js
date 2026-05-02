@@ -1,6 +1,7 @@
 import {
   AGREEMENT_QUIZ_QUESTIONS,
   AGREEMENT_VERSION,
+  DOCUMENT_TEMPLATE_DEFINITIONS,
   ENROLLME_DOCUMENT_TYPES,
   ENROLLME_STEPS,
 } from "../constants/enrollme.js";
@@ -12,8 +13,10 @@ import TrainingAcknowledgment from "../models/enrollme/TrainingAcknowledgment.js
 import ViolationCertificationAnnualReview from "../models/enrollme/ViolationCertificationAnnualReview.js";
 import { recordEnrollmeAudit } from "../services/enrollmeAuditService.js";
 import {
+  computePacketReadiness,
   computeMissingDocuments,
   markOnboardingDocumentComplete,
+  nextStatusForReadiness,
   resolveOnboardingByToken,
 } from "../services/enrollmeOnboardingService.js";
 
@@ -25,6 +28,12 @@ function metadataFromRequest(req) {
   };
 }
 
+function optionalDate(value) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
 function signatureFromBody(req, body, documentVersion) {
   return {
     signerName: body.signerName,
@@ -33,9 +42,34 @@ function signatureFromBody(req, body, documentVersion) {
     signedAt: new Date(),
     ipAddress: req.ip,
     userAgent: req.get("user-agent"),
-    documentVersion,
+    documentType: body.documentType,
+    documentTitle: body.documentTitle,
+    documentVersion: body.documentVersion || documentVersion,
+    effectiveDate: optionalDate(body.effectiveDate),
+    generatedAt: optionalDate(body.generatedAt),
+    reviewedAt: optionalDate(body.reviewedAt),
     acknowledgmentText: body.acknowledgmentText,
+    electronicSignatureConsent: Boolean(body.electronicSignatureConsent),
+    dataSnapshot: body.dataSnapshot,
+    contentSnapshot: body.contentSnapshot,
+    contentHash: body.contentHash,
     accepted: true,
+  };
+}
+
+function reviewEventFromBody(req, body) {
+  return {
+    documentType: body.documentType,
+    documentTitle: body.documentTitle,
+    documentVersion: body.documentVersion,
+    effectiveDate: optionalDate(body.effectiveDate),
+    generatedAt: optionalDate(body.generatedAt),
+    reviewedAt: optionalDate(body.reviewedAt) || new Date(),
+    dataSnapshot: body.dataSnapshot,
+    contentSnapshot: body.contentSnapshot,
+    contentHash: body.contentHash,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent"),
   };
 }
 
@@ -226,18 +260,26 @@ async function getPublicPayload(onboarding) {
 
   const publicOnboarding = onboarding.toJSON ? onboarding.toJSON() : { ...onboarding };
   delete publicOnboarding.onboardingTokenHash;
+  publicOnboarding.packetReadiness = computePacketReadiness(publicOnboarding);
 
   return {
     onboarding: publicOnboarding,
     steps: ENROLLME_STEPS,
+    documentTemplates: DOCUMENT_TEMPLATE_DEFINITIONS,
     documents: { application, agreement, training, violation },
     quiz: {
       passed: Boolean(quiz?.passed),
+      signed: Boolean(quiz?.driverSignature?.signedAt),
       score: quiz?.score || 0,
       attempts: quiz?.attempts || 0,
       answeredQuestionIds: [...correctIds],
       totalQuestions: AGREEMENT_QUIZ_QUESTIONS.length,
       nextQuestion: publicQuestion(nextQuestion),
+      answers: quiz?.answers || [],
+      wrongAnswers: quiz?.wrongAnswers || [],
+      explanationsShown: quiz?.explanationsShown || [],
+      completedAt: quiz?.completedAt,
+      driverSignature: quiz?.driverSignature,
     },
   };
 }
@@ -256,7 +298,7 @@ export async function getEnrollmeFormByToken(req, res) {
         onboardingId: onboarding._id,
         actorType: "driver",
         actorLabel: onboarding.email,
-        action: "driver_opened_link",
+        action: "token_opened",
       });
     }
 
@@ -275,7 +317,7 @@ export async function saveEnrollmeStep(req, res) {
       onboardingId: onboarding._id,
       actorType: "driver",
       actorLabel: onboarding.email,
-      action: "driver_saved_step",
+      action: "step_saved",
       metadata: { step: req.body.step },
     });
     return res.status(200).json({ message: "Step saved.", ...(await getPublicPayload(onboarding)) });
@@ -293,7 +335,7 @@ export async function submitEnrollmeStep(req, res) {
       onboardingId: onboarding._id,
       actorType: "driver",
       actorLabel: onboarding.email,
-      action: "driver_submitted_step",
+      action: "step_saved",
       metadata: { step: req.body.step },
     });
     return res.status(200).json({ message: "Step submitted.", ...(await getPublicPayload(onboarding)) });
@@ -302,10 +344,47 @@ export async function submitEnrollmeStep(req, res) {
   }
 }
 
+export async function reviewEnrollmeDocument(req, res) {
+  try {
+    const onboarding = await resolveOnboardingByToken(req.params.token);
+    // API contract: the frontend sends the exact generated preview snapshot the driver reviewed.
+    // A future backend renderer can replace this with a server-canonical snapshot before hashing.
+    const reviewEvent = reviewEventFromBody(req, req.body);
+    onboarding.documentReviewEvents.push(reviewEvent);
+    await onboarding.save();
+
+    await recordEnrollmeAudit({
+      req,
+      onboardingId: onboarding._id,
+      actorType: "driver",
+      actorLabel: onboarding.email,
+      action: "document_previewed",
+      documentType: req.body.documentType,
+      metadata: { contentHash: req.body.contentHash, documentVersion: req.body.documentVersion },
+    });
+    await recordEnrollmeAudit({
+      req,
+      onboardingId: onboarding._id,
+      actorType: "driver",
+      actorLabel: onboarding.email,
+      action: "document_review_confirmed",
+      documentType: req.body.documentType,
+      metadata: { reviewedAt: req.body.reviewedAt, contentHash: req.body.contentHash },
+    });
+
+    return res.status(200).json({ message: "Document review recorded.", review: reviewEvent });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ message: err.message || "Unable to record document review." });
+  }
+}
+
 export async function signEnrollmeDocument(req, res) {
   try {
     const onboarding = await resolveOnboardingByToken(req.params.token);
     const documentType = req.body.documentType;
+    if (req.body.step) {
+      await applyStepData(req, onboarding, req.body.step, req.body.data);
+    }
     const signature = signatureFromBody(req, req.body, req.body.data?.documentVersion || AGREEMENT_VERSION);
 
     if (documentType === ENROLLME_DOCUMENT_TYPES.DRIVER_APPLICATION) {
@@ -336,6 +415,15 @@ export async function signEnrollmeDocument(req, res) {
       violation.driverCertificationRows = req.body.data?.driverCertificationRows || violation.driverCertificationRows;
       violation.noViolations = Boolean(req.body.data?.noViolations);
       await violation.save();
+    } else if (documentType === ENROLLME_DOCUMENT_TYPES.AGREEMENT_QUIZ) {
+      const quiz = await AgreementQuizAttempt.findOne({ onboardingId: onboarding._id });
+      if (!quiz?.passed) {
+        return res.status(400).json({ message: "Agreement quiz acknowledgment is locked until the quiz is complete." });
+      }
+      quiz.acknowledgmentText = req.body.acknowledgmentText;
+      quiz.driverSignature = signature;
+      quiz.signedAt = signature.signedAt;
+      await quiz.save();
     } else if (documentType === ENROLLME_DOCUMENT_TYPES.WC43_REJECTION) {
       // TODO legal/compliance review: WC43 is conditional and should only be marked complete when it applies.
     } else {
@@ -348,8 +436,9 @@ export async function signEnrollmeDocument(req, res) {
       onboardingId: onboarding._id,
       actorType: "driver",
       actorLabel: onboarding.email,
-      action: "driver_signed_document",
+      action: "document_signed",
       documentType,
+      metadata: { contentHash: req.body.contentHash, reviewedAt: req.body.reviewedAt },
     });
 
     return res.status(200).json({ message: "Document signed.", ...(await getPublicPayload(updated)) });
@@ -410,19 +499,27 @@ export async function answerEnrollmeQuizQuestion(req, res) {
     if (attempt.passed && !attempt.completedAt) attempt.completedAt = new Date();
     await attempt.save();
 
-    if (attempt.passed) {
-      await markOnboardingDocumentComplete(onboarding._id, ENROLLME_DOCUMENT_TYPES.AGREEMENT_QUIZ);
-    }
-
     await recordEnrollmeAudit({
       req,
       onboardingId: onboarding._id,
       actorType: "driver",
       actorLabel: onboarding.email,
-      action: correct ? "quiz_answered_correct" : "quiz_answered_wrong",
+      action: "quiz_answered",
       documentType: ENROLLME_DOCUMENT_TYPES.AGREEMENT_QUIZ,
-      metadata: { questionId: question.id, explanationShown: !correct },
+      metadata: { questionId: question.id, correct, explanationShown: !correct },
     });
+
+    if (attempt.passed) {
+      await recordEnrollmeAudit({
+        req,
+        onboardingId: onboarding._id,
+        actorType: "driver",
+        actorLabel: onboarding.email,
+        action: "quiz_passed",
+        documentType: ENROLLME_DOCUMENT_TYPES.AGREEMENT_QUIZ,
+        metadata: { score: attempt.score, attempts: attempt.attempts },
+      });
+    }
 
     const nextQuestion = nextQuizQuestion(attempt);
     return res.status(200).json({
@@ -435,6 +532,7 @@ export async function answerEnrollmeQuizQuestion(req, res) {
       correctAnswer: correct ? null : question.correctAnswer,
       nextQuestion: publicQuestion(nextQuestion),
       answeredQuestionIds: [...correctIds],
+      completedAt: attempt.completedAt,
     });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ message: err.message || "Unable to submit quiz answer." });
@@ -447,6 +545,9 @@ export async function signTrainingAcknowledgment(req, res) {
     const quiz = await AgreementQuizAttempt.findOne({ onboardingId: onboarding._id }).lean();
     if (!quiz?.passed) {
       return res.status(400).json({ message: "Training acknowledgment is locked until the agreement quiz is passed." });
+    }
+    if (!quiz?.driverSignature?.signedAt) {
+      return res.status(400).json({ message: "Training acknowledgment is locked until the agreement quiz acknowledgment is signed." });
     }
 
     const signature = signatureFromBody(req, req.body, AGREEMENT_VERSION);
@@ -474,8 +575,9 @@ export async function signTrainingAcknowledgment(req, res) {
       onboardingId: onboarding._id,
       actorType: "driver",
       actorLabel: onboarding.email,
-      action: "training_acknowledgment_signed",
+      action: "training_acknowledged",
       documentType: ENROLLME_DOCUMENT_TYPES.TRAINING_ACKNOWLEDGMENT,
+      metadata: { contentHash: req.body.contentHash, reviewedAt: req.body.reviewedAt },
     });
 
     return res.status(200).json({ message: "Training acknowledgment signed.", training, ...(await getPublicPayload(updated)) });
@@ -496,7 +598,8 @@ export async function submitEnrollmeOnboarding(req, res) {
       });
     }
 
-    onboarding.status = "submitted";
+    const wasCorrection = onboarding.status === "correction_requested";
+    onboarding.status = nextStatusForReadiness(onboarding) || "driver_submitted";
     onboarding.submittedAt = new Date();
     await onboarding.save();
     await recordEnrollmeAudit({
@@ -504,7 +607,7 @@ export async function submitEnrollmeOnboarding(req, res) {
       onboardingId: onboarding._id,
       actorType: "driver",
       actorLabel: onboarding.email,
-      action: "driver_submitted_onboarding",
+      action: wasCorrection ? "correction_resubmitted" : "driver_submitted",
     });
 
     return res.status(200).json({ message: "Onboarding submitted.", ...(await getPublicPayload(onboarding)) });
