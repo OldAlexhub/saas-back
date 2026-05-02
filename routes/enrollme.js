@@ -20,6 +20,13 @@ import {
   updateEnrollmeSettings,
 } from "../controllers/EnrollmeAdmin.js";
 import {
+  downloadAdminChecklistCsv,
+  downloadComplianceSummaryCsv,
+  downloadDriverMasterCsv,
+  downloadExpirationsCsv,
+  downloadPacketStatusCsv,
+} from "../controllers/EnrollmeReports.js";
+import {
   answerEnrollmeQuizQuestion,
   getEnrollmeFormByToken,
   reviewEnrollmeDocument,
@@ -113,5 +120,11 @@ router.patch(
   updateEnrollmeSettings
 );
 router.get("/admin/compliance-checklist", getEnrollmeComplianceChecklist);
+
+router.get("/admin/reports/drivers.csv", downloadDriverMasterCsv);
+router.get("/admin/reports/packet-status.csv", downloadPacketStatusCsv);
+router.get("/admin/reports/admin-checklist.csv", downloadAdminChecklistCsv);
+router.get("/admin/reports/expirations.csv", downloadExpirationsCsv);
+router.get("/admin/reports/compliance-summary.csv", downloadComplianceSummaryCsv);
 
 export default router;
