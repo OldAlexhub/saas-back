@@ -49,6 +49,13 @@ const DriverSchema = new mongoose.Schema(
       type: DriverAppAuthSchema,
       default: () => ({ forcePasswordReset: true }),
     },
+
+    // Operational approval status set by admin
+    status: {
+      type: String,
+      enum: ['pending', 'approved', 'inactive'],
+      default: 'pending',
+    },
   },
   { timestamps: true }
 );

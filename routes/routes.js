@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getCompanyProfile, updateCompanyProfile } from "../controllers/Company.js";
 import { listDiagnostics } from "../controllers/AdminDiagnostics.js";
+import { downloadApk, getAppInfo } from "../controllers/AppDownload.js";
 import {
   listEnrollmeAdminsController,
   createEnrollmeAdminController,
@@ -28,6 +29,7 @@ const router = Router();
 router.use("/admins", adminsRouter);
 router.use("/enrollme", enrollmeRouter);
 router.get("/company/profile", getCompanyProfile);
+router.get("/app/apk", downloadApk);
 
 // ---- Auth gate: everything below requires admin ----
 router.use((req, res, next) => {
@@ -41,6 +43,7 @@ router.use((req, res, next) => {
 });
 
 router.put("/company/profile", updateCompanyProfile);
+router.get("/app/info", getAppInfo);
 router.get("/admin/diagnostics", listDiagnostics);
 router.get("/enrollme-admins", listEnrollmeAdminsController);
 router.post("/enrollme-admins", validate(enrollmeCreateAdminSchema), createEnrollmeAdminController);
