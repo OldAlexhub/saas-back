@@ -4,15 +4,15 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Resolve paths relative to this file: controllers/ → server/ → taxiOps/
-const DRIVERAPP_ROOT = path.resolve(__dirname, '../../driverapp');
-const APK_PATH = path.join(DRIVERAPP_ROOT, 'android/app/build/outputs/apk/release/app-release.apk');
-const PKG_PATH = path.join(DRIVERAPP_ROOT, 'package.json');
+// APK and version live in server/public/apk/ — deployed alongside the server
+const APK_DIR = path.resolve(__dirname, '../public/apk');
+const APK_PATH = path.join(APK_DIR, 'app-release.apk');
+const VERSION_PATH = path.join(APK_DIR, 'version.json');
 
 function readAppVersion() {
   try {
-    const pkg = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
-    return pkg.version || '1.0.0';
+    const data = JSON.parse(fs.readFileSync(VERSION_PATH, 'utf8'));
+    return data.version || '1.0.0';
   } catch {
     return '1.0.0';
   }
@@ -20,7 +20,7 @@ function readAppVersion() {
 
 export const getAppInfo = (_req, res) => {
   if (!fs.existsSync(APK_PATH)) {
-    return res.status(404).json({ message: 'APK not found. Run assembleRelease first.' });
+    return res.status(404).json({ message: 'APK not found. Add app-release.apk to server/public/apk/.' });
   }
   const version = readAppVersion();
   const stats = fs.statSync(APK_PATH);
@@ -34,7 +34,7 @@ export const getAppInfo = (_req, res) => {
 
 export const downloadApk = (_req, res) => {
   if (!fs.existsSync(APK_PATH)) {
-    return res.status(404).json({ message: 'APK not found. Run assembleRelease first.' });
+    return res.status(404).json({ message: 'APK not found. Add app-release.apk to server/public/apk/.' });
   }
   const version = readAppVersion();
   res.download(APK_PATH, `TaxiOps-Driver-v${version}.apk`, (err) => {
