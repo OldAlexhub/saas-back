@@ -51,8 +51,10 @@ function publicDriver(driver) {
   return json;
 }
 
-function buildOnboardingUrl(token) {
-  const base = config.enrollme.frontendBaseUrl.replace(/\/+$/, "");
+function buildOnboardingUrl(token, req) {
+  const requestOrigin = req?.get?.("origin");
+  const configuredBase = process.env.ENROLLME_FRONTEND_URL || "";
+  const base = (configuredBase || requestOrigin || config.enrollme.frontendBaseUrl).replace(/\/+$/, "");
   return `${base}/enrollme/start/${token}`;
 }
 
@@ -169,7 +171,7 @@ export async function createEnrollmeDriver(req, res) {
       driver: publicDriver(onboarding),
       onboardingToken: rawToken,
       onboardingPath: `/enrollme/start/${rawToken}`,
-      onboardingUrl: buildOnboardingUrl(rawToken),
+      onboardingUrl: buildOnboardingUrl(rawToken, req),
     });
   } catch (err) {
     console.error("Create EnrollMe driver failed:", err);
