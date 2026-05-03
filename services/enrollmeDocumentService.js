@@ -5,7 +5,10 @@ import { DOCUMENT_TEMPLATE_DEFINITIONS } from "../constants/enrollme.js";
 import DocumentTemplate from "../models/enrollme/DocumentTemplate.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const assetsRoot = path.resolve(__dirname, "../../enrollme/src/assets");
+const defaultAssetsRoot = path.resolve(__dirname, "../../enrollme/src/assets");
+const assetsRoot = process.env.ENROLLME_ASSETS_ROOT
+  ? path.resolve(process.env.ENROLLME_ASSETS_ROOT)
+  : defaultAssetsRoot;
 
 export function getEnrollmeAssetsRoot() {
   return assetsRoot;
@@ -25,7 +28,7 @@ export async function ensureDocumentTemplates() {
     const template = await DocumentTemplate.findOneAndUpdate(
       { documentType: definition.documentType },
       { $set: { ...definition, active: true } },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
+      { new: true, upsert: true, setDefaultsOnInsert: true },
     ).lean();
     templates.push(template);
   }
