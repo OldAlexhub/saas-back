@@ -16,6 +16,7 @@ import EnrollmeSettings from "../models/enrollme/EnrollmeSettings.js";
 import IndependentContractorAgreementSubmission from "../models/enrollme/IndependentContractorAgreementSubmission.js";
 import TrainingAcknowledgment from "../models/enrollme/TrainingAcknowledgment.js";
 import ViolationCertificationAnnualReview from "../models/enrollme/ViolationCertificationAnnualReview.js";
+import DriverModel from "../models/DriverSchema.js";
 import { recordEnrollmeAudit } from "../services/enrollmeAuditService.js";
 import { assertTemplateFile, ensureDocumentTemplates } from "../services/enrollmeDocumentService.js";
 import {
@@ -182,6 +183,110 @@ export async function createEnrollmeDriver(req, res) {
   }
 }
 
+export async function regenerateEnrollmeLink(req, res) {
+  try {
+    const driver = await DriverOnboarding.findById(req.params.id);
+    if (!driver) return res.status(404).json({ message: "Driver onboarding record not found." });
+
+    const terminalStatuses = new Set(["approved_to_operate", "rejected", "archived", "inactive"]);
+    if (terminalStatuses.has(driver.status)) {
+      return res.status(400).json({ message: `Cannot regenerate link for a driver with status '${driver.status}'.` });
+    }
+
+    const settings = await getEnrollmeSettings();
+    const tokenExpirationDays =
+      req.body.tokenExpirationDays ||
+      settings.tokenExpirationDays ||
+      config.enrollme.tokenExpirationDays;
+
+    const rawToken = generateOnboardingToken();
+    driver.onboardingTokenHash = hashOnboardingToken(rawToken);
+    driver.tokenExpiresAt = addDays(new Date(), tokenExpirationDays);
+    await driver.save();
+
+    await recordEnrollmeAudit({
+      req,
+      onboardingId: driver._id,
+      actorType: "admin",
+      actorAdminId: req.enrollmeAdmin.id,
+      actorLabel: req.enrollmeAdmin.email,
+      action: "onboarding_link_regenerated",
+      metadata: { tokenExpirationDays },
+    });
+
+    return res.status(200).json({
+      message: "Enrollment link regenerated.",
+      driver: publicDriver(driver),
+      onboardingToken: rawToken,
+      onboardingPath: `/enrollme/start/${rawToken}`,
+      onboardingUrl: buildOnboardingUrl(rawToken, req),
+    });
+  } catch (err) {
+    console.error("Regenerate EnrollMe link failed:", err);
+    return res.status(500).json({ message: "Server error while regenerating enrollment link." });
+  }
+}
+
+export async function updateEnrollmeDriverProfile(req, res) {
+  try {
+    const driver = await DriverOnboarding.findById(req.params.id);
+    if (!driver) return res.status(404).json({ message: "Driver onboarding record not found." });
+
+    if (req.body.driverFirstName !== undefined) driver.driverFirstName = req.body.driverFirstName;
+    if (req.body.driverMiddleName !== undefined) driver.driverMiddleName = req.body.driverMiddleName;
+    if (req.body.driverLastName !== undefined) driver.driverLastName = req.body.driverLastName;
+    if (req.body.email !== undefined) driver.email = req.body.email;
+    if (req.body.phone !== undefined) driver.phone = req.body.phone;
+    await driver.save();
+
+    // Sync to DriverApplication if it exists
+    const applicationUpdates = {};
+    if (req.body.driverFirstName !== undefined) applicationUpdates["applicant.firstName"] = req.body.driverFirstName;
+    if (req.body.driverMiddleName !== undefined) applicationUpdates["applicant.middleName"] = req.body.driverMiddleName;
+    if (req.body.driverLastName !== undefined) applicationUpdates["applicant.lastName"] = req.body.driverLastName;
+    if (req.body.email !== undefined) applicationUpdates["applicant.email"] = req.body.email;
+    if (req.body.phone !== undefined) applicationUpdates["applicant.phone"] = req.body.phone;
+    if (Object.keys(applicationUpdates).length > 0) {
+      await DriverApplication.updateOne({ onboardingId: driver._id }, { $set: applicationUpdates });
+    }
+
+    // Sync to main Driver record if this driver was imported
+    const mainDriverUpdates = {};
+    if (req.body.driverFirstName !== undefined) mainDriverUpdates.firstName = req.body.driverFirstName;
+    if (req.body.driverLastName !== undefined) mainDriverUpdates.lastName = req.body.driverLastName;
+    if (req.body.email !== undefined) mainDriverUpdates.email = req.body.email;
+    if (req.body.phone !== undefined) mainDriverUpdates.phoneNumber = req.body.phone;
+    if (Object.keys(mainDriverUpdates).length > 0) {
+      try {
+        await DriverModel.findOneAndUpdate(
+          { "enrollmeSource.onboardingId": driver._id },
+          { $set: mainDriverUpdates }
+        );
+      } catch (syncErr) {
+        console.warn("EnrollMe profile update: main Driver sync failed (non-fatal):", syncErr.message);
+      }
+    }
+
+    await recordEnrollmeAudit({
+      req,
+      onboardingId: driver._id,
+      actorType: "admin",
+      actorAdminId: req.enrollmeAdmin.id,
+      actorLabel: req.enrollmeAdmin.email,
+      action: "driver_profile_updated",
+      metadata: { fields: Object.keys(req.body) },
+    });
+
+    return res.status(200).json({ message: "Driver profile updated.", driver: publicDriver(driver) });
+  } catch (err) {
+    console.error("Update EnrollMe driver profile failed:", err);
+    if (err.code === 11000) {
+      return res.status(409).json({ message: "That email is already in use by another record." });
+    }
+    return res.status(500).json({ message: "Server error while updating driver profile." });
+  }
+}
+
 export async function listEnrollmeDrivers(req, res) {
   try {
     const { search = "", status = "" } = req.query;
@@ -304,6 +409,19 @@ export async function updateEnrollmeDriverStatus(req, res) {
     }
     if (req.body.status === "rejected") driver.rejectedAt = new Date();
     if (req.body.status === "archived") driver.archivedAt = new Date();
+    if (req.body.status === "inactive") {
+      driver.inactivatedAt = new Date();
+      driver.inactivatedBy = req.enrollmeAdmin.id;
+      // Sync inactive status to the main Driver record if this driver was imported
+      try {
+        await DriverModel.findOneAndUpdate(
+          { "enrollmeSource.onboardingId": driver._id },
+          { $set: { status: "inactive" } }
+        );
+      } catch (syncErr) {
+        console.warn("EnrollMe deactivate: main Driver sync failed (non-fatal):", syncErr.message);
+      }
+    }
     if (req.body.note) {
       driver.adminNotes.push({ note: req.body.note, createdBy: req.enrollmeAdmin.id });
     }
@@ -417,6 +535,14 @@ export async function addEnrollmeDriverNote(req, res) {
   }
 }
 
+const CHECKLIST_EXPIRY_TO_DRIVER_FIELD = {
+  driver_license_copy: "dlExpiry",
+  medical_certificate: "dotExpiry",
+  background_check: "cbiExpiry",
+  mvr: "mvrExpiry",
+  fingerprint_qualification: "fingerPrintsExpiry",
+};
+
 export async function updateEnrollmeAdminChecklistItem(req, res) {
   try {
     const driver = await DriverOnboarding.findById(req.params.id);
@@ -432,6 +558,19 @@ export async function updateEnrollmeAdminChecklistItem(req, res) {
     item.updatedAt = new Date();
     await driver.save();
 
+    // Sync expiry date to main Driver record if this checklist item maps to a Driver compliance field
+    const driverField = CHECKLIST_EXPIRY_TO_DRIVER_FIELD[req.body.key];
+    if (driverField && req.body.expiresAt) {
+      try {
+        await DriverModel.findOneAndUpdate(
+          { "enrollmeSource.onboardingId": driver._id },
+          { $set: { [driverField]: new Date(req.body.expiresAt) } }
+        );
+      } catch (syncErr) {
+        console.warn(`EnrollMe checklist sync to Driver.${driverField} failed (non-fatal):`, syncErr.message);
+      }
+    }
+
     const refreshed = await refreshOnboardingReadiness(driver._id);
 
     await recordEnrollmeAudit({
@@ -441,7 +580,7 @@ export async function updateEnrollmeAdminChecklistItem(req, res) {
       actorAdminId: req.enrollmeAdmin.id,
       actorLabel: req.enrollmeAdmin.email,
       action: "admin_checklist_updated",
-      metadata: { key: req.body.key, status: req.body.status, notes: req.body.notes },
+      metadata: { key: req.body.key, status: req.body.status, notes: req.body.notes, synced: driverField || null },
     });
 
     return res.status(200).json({ message: "Admin checklist updated.", driver: publicDriver(refreshed || driver) });

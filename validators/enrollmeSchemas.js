@@ -121,6 +121,43 @@ export const enrollmeSettingsSchema = z.object({
   tokenExpirationDays: z.coerce.number().int().min(1).max(90).optional(),
   requiredDocuments: documentList.optional(),
   optionalDocuments: documentList.optional(),
+  charges: z
+    .array(
+      z.object({
+        _id: z.string().optional(),
+        label: z.string().trim().min(1),
+        amount: z.coerce.number().min(0),
+        description: z.string().trim().optional().or(z.literal("")),
+        active: z.boolean().optional(),
+      })
+    )
+    .optional(),
+});
+
+export const enrollmeRegenerateLinkSchema = z.object({
+  tokenExpirationDays: z.coerce.number().int().min(1).max(90).optional(),
+});
+
+export const enrollmeUpdateDriverProfileSchema = z.object({
+  driverFirstName: z.string().trim().min(1).optional(),
+  driverMiddleName: optionalString,
+  driverLastName: z.string().trim().min(1).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
+  phone: optionalString,
+});
+
+export const enrollmeChargesAcknowledgmentSchema = z.object({
+  charges: z.array(
+    z.object({
+      label: z.string().trim().min(1),
+      amount: z.coerce.number().min(0),
+      description: z.string().trim().optional().or(z.literal("")),
+    })
+  ),
+  acknowledgedAll: z.literal(true),
+  signerName: z.string().trim().min(1),
+  typedSignature: optionalString,
+  signedAt: z.string().trim().optional(),
 });
 
 export const enrollmeSeedAdminSchema = z.object({

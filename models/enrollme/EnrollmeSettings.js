@@ -3,6 +3,16 @@ import { DEFAULT_OPTIONAL_DOCUMENTS, DEFAULT_REQUIRED_DOCUMENTS } from "../../co
 
 const { Schema } = mongoose;
 
+const chargeItemSchema = new Schema(
+  {
+    label: { type: String, required: true, trim: true },
+    amount: { type: Number, required: true, min: 0 },
+    description: { type: String, trim: true },
+    active: { type: Boolean, default: true },
+  },
+  { _id: true }
+);
+
 const EnrollmeSettingsSchema = new Schema(
   {
     singletonKey: { type: String, unique: true, default: "global", immutable: true },
@@ -11,6 +21,7 @@ const EnrollmeSettingsSchema = new Schema(
     tokenExpirationDays: { type: Number, default: 14, min: 1, max: 90 },
     requiredDocuments: { type: [String], default: () => [...DEFAULT_REQUIRED_DOCUMENTS] },
     optionalDocuments: { type: [String], default: () => [...DEFAULT_OPTIONAL_DOCUMENTS] },
+    charges: { type: [chargeItemSchema], default: [] },
     updatedBy: { type: Schema.Types.ObjectId, ref: "EnrollmeAdmin" },
   },
   { timestamps: true }

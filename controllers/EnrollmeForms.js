@@ -6,6 +6,7 @@ import {
   ENROLLME_STEPS,
 } from "../constants/enrollme.js";
 import AgreementQuizAttempt from "../models/enrollme/AgreementQuizAttempt.js";
+import ChargesAcknowledgment from "../models/enrollme/ChargesAcknowledgment.js";
 import DriverApplication from "../models/enrollme/DriverApplication.js";
 import DriverOnboarding from "../models/enrollme/DriverOnboarding.js";
 import IndependentContractorAgreementSubmission from "../models/enrollme/IndependentContractorAgreementSubmission.js";
@@ -16,6 +17,7 @@ import { encryptSensitiveValue } from "../services/enrollmeSensitiveDataService.
 import {
   computePacketReadiness,
   computeMissingDocuments,
+  getEnrollmeSettings,
   markOnboardingDocumentComplete,
   nextStatusForReadiness,
   resolveOnboardingByToken,
@@ -273,13 +275,17 @@ async function applyStepData(req, onboarding, step, data = {}) {
 }
 
 async function getPublicPayload(onboarding) {
-  const [application, agreement, quiz, training, violation] = await Promise.all([
+  const [application, agreement, quiz, training, violation, chargesAck, settings] = await Promise.all([
     DriverApplication.findOne({ onboardingId: onboarding._id }).lean(),
     IndependentContractorAgreementSubmission.findOne({ onboardingId: onboarding._id }).lean(),
     AgreementQuizAttempt.findOne({ onboardingId: onboarding._id }).lean(),
     TrainingAcknowledgment.findOne({ onboardingId: onboarding._id }).lean(),
     ViolationCertificationAnnualReview.findOne({ onboardingId: onboarding._id }).lean(),
+    ChargesAcknowledgment.findOne({ onboardingId: onboarding._id }).lean(),
+    getEnrollmeSettings(),
   ]);
+
+  const activeCharges = (settings?.charges || []).filter((c) => c.active !== false);
 
   const nextQuestion = nextQuizQuestion(quiz);
   const correctIds = new Set((quiz?.answers || []).filter((answer) => answer.correct).map((answer) => answer.questionId));
@@ -288,9 +294,16 @@ async function getPublicPayload(onboarding) {
   delete publicOnboarding.onboardingTokenHash;
   publicOnboarding.packetReadiness = computePacketReadiness(publicOnboarding);
 
+  // Include charges-acknowledgment step only if there are active charges
+  const steps = activeCharges.length > 0
+    ? ENROLLME_STEPS
+    : ENROLLME_STEPS.filter((s) => s.key !== "charges-acknowledgment");
+
   return {
     onboarding: publicOnboarding,
-    steps: ENROLLME_STEPS,
+    activeCharges,
+    chargesAcknowledgment: chargesAck || null,
+    steps,
     documentTemplates: DOCUMENT_TEMPLATE_DEFINITIONS,
     documents: { application, agreement, training, violation },
     quiz: {
@@ -609,6 +622,55 @@ export async function signTrainingAcknowledgment(req, res) {
     return res.status(200).json({ message: "Training acknowledgment signed.", training, ...(await getPublicPayload(updated)) });
   } catch (err) {
     return res.status(err.statusCode || 500).json({ message: err.message || "Unable to sign training acknowledgment." });
+  }
+}
+
+export async function acknowledgeEnrollmeCharges(req, res) {
+  try {
+    const onboarding = await resolveOnboardingByToken(req.params.token);
+    const training = await TrainingAcknowledgment.findOne({ onboardingId: onboarding._id }).lean();
+    if (!training?.signedAt) {
+      return res.status(400).json({ message: "Complete the training acknowledgment before acknowledging charges." });
+    }
+
+    await ChargesAcknowledgment.findOneAndUpdate(
+      { onboardingId: onboarding._id },
+      {
+        $set: {
+          onboardingId: onboarding._id,
+          charges: req.body.charges || [],
+          acknowledgedAll: true,
+          driverSignature: {
+            signerName: req.body.signerName,
+            typedSignature: req.body.typedSignature,
+            signedAt: new Date(),
+            ipAddress: req.ip,
+            userAgent: req.get("user-agent"),
+            documentType: ENROLLME_DOCUMENT_TYPES.CHARGES_ACKNOWLEDGMENT,
+            accepted: true,
+          },
+          signedAt: new Date(),
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    onboarding.chargesAcknowledgedAt = new Date();
+    await onboarding.save();
+
+    await recordEnrollmeAudit({
+      req,
+      onboardingId: onboarding._id,
+      actorType: "driver",
+      actorLabel: onboarding.email,
+      action: "charges_acknowledged",
+      documentType: ENROLLME_DOCUMENT_TYPES.CHARGES_ACKNOWLEDGMENT,
+      metadata: { chargeCount: (req.body.charges || []).length },
+    });
+
+    return res.status(200).json({ message: "Charges acknowledged.", ...(await getPublicPayload(onboarding)) });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ message: err.message || "Unable to record charges acknowledgment." });
   }
 }
 

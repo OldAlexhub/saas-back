@@ -14,8 +14,10 @@ import {
   getEnrollmeSettingsController,
   listEnrollmeDocuments,
   listEnrollmeDrivers,
+  regenerateEnrollmeLink,
   requestEnrollmeCorrection,
   updateEnrollmeAdminChecklistItem,
+  updateEnrollmeDriverProfile,
   updateEnrollmeDriverStatus,
   updateEnrollmeSettings,
 } from "../controllers/EnrollmeAdmin.js";
@@ -27,6 +29,7 @@ import {
   downloadPacketStatusCsv,
 } from "../controllers/EnrollmeReports.js";
 import {
+  acknowledgeEnrollmeCharges,
   answerEnrollmeQuizQuestion,
   getEnrollmeFormByToken,
   reviewEnrollmeDocument,
@@ -42,16 +45,19 @@ import { validate } from "../middleware/validate.js";
 import {
   enrollmeAdminChecklistSchema,
   enrollmeAdminLoginSchema,
+  enrollmeChargesAcknowledgmentSchema,
   enrollmeCorrectionSchema,
   enrollmeCreateDriverSchema,
   enrollmeDocumentReviewSchema,
   enrollmeFinalAcknowledgmentSchema,
   enrollmeNoteSchema,
   enrollmeQuizAnswerSchema,
+  enrollmeRegenerateLinkSchema,
   enrollmeSaveStepSchema,
   enrollmeSettingsSchema,
   enrollmeSignatureSchema,
   enrollmeStatusSchema,
+  enrollmeUpdateDriverProfileSchema,
 } from "../validators/enrollmeSchemas.js";
 
 const router = Router();
@@ -68,6 +74,11 @@ router.post(
   "/forms/:token/final-acknowledgment",
   validate(enrollmeFinalAcknowledgmentSchema),
   signTrainingAcknowledgment
+);
+router.post(
+  "/forms/:token/charges-acknowledgment",
+  validate(enrollmeChargesAcknowledgmentSchema),
+  acknowledgeEnrollmeCharges
 );
 router.post("/forms/:token/submit", submitEnrollmeOnboarding);
 
@@ -89,6 +100,18 @@ router.patch(
   requireEnrollmeRole("super_admin", "compliance_manager", "reviewer"),
   validate(enrollmeStatusSchema),
   updateEnrollmeDriverStatus
+);
+router.patch(
+  "/admin/drivers/:id/profile",
+  requireEnrollmeRole("super_admin", "compliance_manager"),
+  validate(enrollmeUpdateDriverProfileSchema),
+  updateEnrollmeDriverProfile
+);
+router.post(
+  "/admin/drivers/:id/regenerate-link",
+  requireEnrollmeRole("super_admin", "compliance_manager"),
+  validate(enrollmeRegenerateLinkSchema),
+  regenerateEnrollmeLink
 );
 router.post(
   "/admin/drivers/:id/request-correction",

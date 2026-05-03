@@ -90,10 +90,13 @@ const DriverOnboardingSchema = new Schema(
     createdBy: { type: Schema.Types.ObjectId, ref: "EnrollmeAdmin" },
     reviewedBy: { type: Schema.Types.ObjectId, ref: "EnrollmeAdmin" },
     approvedBy: { type: Schema.Types.ObjectId, ref: "EnrollmeAdmin" },
+    inactivatedBy: { type: Schema.Types.ObjectId, ref: "EnrollmeAdmin" },
     submittedAt: { type: Date },
     approvedAt: { type: Date },
     rejectedAt: { type: Date },
     archivedAt: { type: Date },
+    inactivatedAt: { type: Date },
+    chargesAcknowledgedAt: { type: Date },
   },
   { timestamps: true }
 );

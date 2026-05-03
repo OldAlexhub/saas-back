@@ -11,6 +11,7 @@ export const DRIVER_ONBOARDING_STATUSES = [
   "approved_to_operate",
   "rejected",
   "archived",
+  "inactive",
   // Legacy statuses are accepted so existing records can still be opened and migrated by normal saves.
   "draft",
   "submitted",
@@ -26,6 +27,7 @@ export const ENROLLME_DOCUMENT_TYPES = {
   VIOLATION_CERTIFICATION: "violation_certification_annual_review",
   VEHICLE_INSPECTION: "vehicle_inspection_report",
   PREVENTIVE_MAINTENANCE: "preventive_maintenance_plan",
+  CHARGES_ACKNOWLEDGMENT: "charges_acknowledgment",
 };
 
 export const ENROLLME_STEPS = [
@@ -76,6 +78,13 @@ export const ENROLLME_STEPS = [
     title: "Training and Policy Acknowledgment",
     documentType: ENROLLME_DOCUMENT_TYPES.TRAINING_ACKNOWLEDGMENT,
     stage: "Document Review and Signature",
+  },
+  {
+    key: "charges-acknowledgment",
+    title: "Lease and Charges Acknowledgment",
+    documentType: ENROLLME_DOCUMENT_TYPES.CHARGES_ACKNOWLEDGMENT,
+    stage: "Document Review and Signature",
+    conditional: true,
   },
   {
     key: "optional-documents",
