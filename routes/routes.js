@@ -11,6 +11,7 @@ import {
 import { authenticate, requireAdmin } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { enrollmeCreateAdminSchema, enrollmeUpdateAdminSchema } from "../validators/enrollmeSchemas.js";
+import accidentReportsRouter from "./accidentReports.js";
 import activesRouter from "./actives.js";
 import adminsRouter from "./admins.js";
 import bookingsRouter from "./bookings.js";
@@ -57,6 +58,7 @@ router.use("/fares", faresRouter);
 router.use("/bookings", bookingsRouter);
 router.use("/messages", messagesRouter);
 router.use("/reports", reportsRouter);
+router.use("/accident-reports", accidentReportsRouter);
 
 export { driverAppRouter };
 export default router;
