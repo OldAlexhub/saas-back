@@ -13,6 +13,7 @@ import { validate } from "../middleware/validate.js";
 import { enrollmeCreateAdminSchema, enrollmeUpdateAdminSchema } from "../validators/enrollmeSchemas.js";
 import accidentReportsRouter from "./accidentReports.js";
 import activesRouter from "./actives.js";
+import nemtRouter from "./nemt.js";
 import adminsRouter from "./admins.js";
 import bookingsRouter from "./bookings.js";
 import driverAppRouter from "./driverApp.js";
@@ -59,6 +60,7 @@ router.use("/bookings", bookingsRouter);
 router.use("/messages", messagesRouter);
 router.use("/reports", reportsRouter);
 router.use("/accident-reports", accidentReportsRouter);
+router.use("/nemt", nemtRouter);
 
 export { driverAppRouter };
 export default router;

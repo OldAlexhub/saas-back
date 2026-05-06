@@ -25,6 +25,7 @@ import {
 } from "../controllers/DriverApp.js";
 import { changeDriverPassword, loginDriver, logoutDriver } from "../controllers/DriverAppAuth.js";
 import { driverAcknowledgeMessage, driverSnoozeMessage } from "../controllers/DriverMessages.js";
+import nemtDriverAppRouter from "./nemtDriverApp.js";
 import { authenticateDriver } from "../middleware/driverAuth.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
 import { validate } from "../middleware/validate.js";
@@ -64,6 +65,8 @@ router.get("/hos", getHosSummary);
 router.get("/hos/:driverId", getHosSummary);
 router.get("/hos/logs", getDutyLogs);
 router.get("/hos/logs/:driverId", getDutyLogs);
+router.use("/nemt", nemtDriverAppRouter);
+
 router.post("/diagnostics", async (req, res) => {
     try {
         const { uploadDiagnostics } = await import("../controllers/DriverApp.js");
