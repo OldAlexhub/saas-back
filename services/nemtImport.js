@@ -65,6 +65,22 @@ const COLUMN_MAP = {
   passengers: "passengerCount",
   passengercount: "passengerCount",
   "passenger count": "passengerCount",
+  // financials
+  "estimated miles": "estimatedMiles",
+  estimatedmiles: "estimatedMiles",
+  "est miles": "estimatedMiles",
+  estmiles: "estimatedMiles",
+  miles: "estimatedMiles",
+  distance: "estimatedMiles",
+  "agency fare": "agencyFare",
+  agencyfare: "agencyFare",
+  fare: "agencyFare",
+  rate: "agencyFare",
+  "trip fare": "agencyFare",
+  tripfare: "agencyFare",
+  "fare basis": "agencyFareBasis",
+  farebasis: "agencyFareBasis",
+  agencyfarebasis: "agencyFareBasis",
 };
 
 function normalizeKey(key) {
@@ -111,6 +127,25 @@ function normalizeRow(rawRow) {
   }
   if (r.mobilityType !== undefined) {
     r.mobilityType = coerceMobilityType(r.mobilityType);
+  }
+
+  if (r.estimatedMiles !== undefined) {
+    const v = parseFloat(r.estimatedMiles);
+    r.estimatedMiles = isNaN(v) || v < 0 ? undefined : v;
+    if (r.estimatedMiles === undefined) delete r.estimatedMiles;
+  }
+  if (r.agencyFare !== undefined) {
+    const v = parseFloat(r.agencyFare);
+    r.agencyFare = isNaN(v) || v < 0 ? undefined : v;
+    if (r.agencyFare === undefined) delete r.agencyFare;
+  }
+
+  // Normalize fareBasis to accepted enum values
+  if (r.agencyFareBasis !== undefined) {
+    const fb = String(r.agencyFareBasis).toLowerCase().replace(/[\s_-]+/g, "");
+    if (fb.includes("mile")) r.agencyFareBasis = "per_mile";
+    else if (fb.includes("trip") || fb.includes("flat")) r.agencyFareBasis = "per_trip";
+    else delete r.agencyFareBasis;
   }
 
   // xlsx with cellDates:true already converts date cells to JS Date objects.

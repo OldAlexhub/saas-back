@@ -133,7 +133,7 @@ export async function importTrips(req, res) {
   if (!agencyId) return res.status(400).json({ message: "agencyId is required." });
   if (!serviceDate) return res.status(400).json({ message: "serviceDate is required." });
 
-  const agency = await NemtAgencyModel.findById(agencyId).lean();
+  const agency = await NemtAgencyModel.findOne({ agencyId }).lean();
   if (!agency) return res.status(404).json({ message: "Agency not found." });
 
   const { rows, errors: parseErrors } = parseImportFile(req.file.buffer, req.file.mimetype);

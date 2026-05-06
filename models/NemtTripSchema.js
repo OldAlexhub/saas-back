@@ -33,7 +33,7 @@ const NemtTripSchema = new mongoose.Schema(
     tripId: { type: Number, unique: true },
 
     // Agency
-    agencyId: { type: mongoose.Schema.Types.ObjectId, ref: "nemtagencies", required: true },
+    agencyId: { type: String, required: true },
     agencyTripRef: { type: String, trim: true },
     importBatchId: { type: String, trim: true },
 
