@@ -37,14 +37,12 @@ export function sanitizeDriver(doc) {
   delete plain.ssn;
   delete plain.history;
   if (plain.driverApp) {
-    const { forcePasswordReset = false, lastLoginAt, lastLogoutAt, deviceId, pushToken } =
-      plain.driverApp;
+    const { forcePasswordReset = false, lastLoginAt, lastLogoutAt, deviceId } = plain.driverApp;
     plain.driverApp = {
       forcePasswordReset: Boolean(forcePasswordReset),
       lastLoginAt: lastLoginAt || null,
       lastLogoutAt: lastLogoutAt || null,
       deviceId: deviceId || null,
-      pushToken: pushToken || null,
     };
   }
   return plain;

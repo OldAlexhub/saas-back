@@ -7,9 +7,11 @@ import {
   bulkCreateTrips, cancelTrip, createTrip, getTripById, importTrips,
   listTrips, markNoShow, updateTrip,
 } from "../controllers/NemtTrips.js";
+import { commitImportBatch, getImportBatch, stageImport } from "../controllers/NemtImports.js";
 import {
-  addTripToRun, cancelRun, createRun, dispatchRun, getRunById,
-  listRuns, optimizeRunController, reorderRun, removeTripFromRun, updateRun,
+  addTripToRun, autoAssignRuns, cancelRun, createRun, dispatchRun, getRunById,
+  listRuns, optimizeRunController, previewRunOptimization, applyRunOptimization,
+  reorderRun, removeTripFromRun, updateRun,
 } from "../controllers/NemtRuns.js";
 import { getNemtSettings, updateNemtSettings } from "../controllers/NemtSettings.js";
 import {
@@ -24,6 +26,7 @@ import {
 import { validate } from "../middleware/validate.js";
 import {
   addTripToRunSchema,
+  autoAssignRunsSchema,
   bulkCreateTripsSchema,
   cancelRunSchema,
   cancelTripSchema,
@@ -68,7 +71,13 @@ router.patch("/trips/:id", validate(updateTripSchema), updateTrip);
 router.post("/trips/:id/cancel", validate(cancelTripSchema), cancelTrip);
 router.post("/trips/:id/no-show", validate(noShowTripSchema), markNoShow);
 
+// ---- Import staging ----
+router.post("/imports/stage", upload.single("file"), stageImport);
+router.get("/imports/:id", getImportBatch);
+router.post("/imports/:id/commit", commitImportBatch);
+
 // ---- Runs ----
+router.post("/runs/auto-assign", validate(autoAssignRunsSchema), autoAssignRuns);
 router.get("/runs", listRuns);
 router.post("/runs", validate(createRunSchema), createRun);
 router.get("/runs/:id", getRunById);
@@ -77,6 +86,8 @@ router.patch("/runs/:id/reorder", validate(reorderRunSchema), reorderRun);
 router.post("/runs/:id/trips", validate(addTripToRunSchema), addTripToRun);
 router.delete("/runs/:runId/trips/:tripId", removeTripFromRun);
 router.post("/runs/:id/optimize", optimizeRunController);
+router.post("/runs/:id/reoptimize/preview", previewRunOptimization);
+router.post("/runs/:id/reoptimize/apply", applyRunOptimization);
 router.post("/runs/:id/dispatch", dispatchRun);
 router.post("/runs/:id/cancel", validate(cancelRunSchema), cancelRun);
 

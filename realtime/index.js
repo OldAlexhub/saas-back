@@ -126,66 +126,6 @@ export function emitToAdmins(event, payload) {
 export function emitToDriver(driverId, event, payload) {
   if (!io || !driverId) return;
   io.to(`driver:${driverId}`).emit(event, payload);
-  // Fire-and-forget: if the driver has a registered Expo push token, send
-  // a remote push so the driver gets notified when the app is backgrounded.
-  (async () => {
-    try {
-      const driver = await DriverModel.findOne({ driverId }).select('driverApp.pushToken firstName lastName').lean();
-      const pushToken = driver?.driverApp?.pushToken;
-      if (!pushToken) return;
-
-      const title = payload?.pickupAddress ? `New dispatch: ${payload.pickupAddress}` : 'New dispatch';
-      const body = payload?.dropoffAddress ? `Drop-off: ${payload.dropoffAddress}` : 'Tap to view assignment';
-
-      // Expo token path (legacy Expo push service)
-      if (typeof pushToken === 'string' && pushToken.startsWith('ExponentPushToken[')) {
-        const message = {
-          to: pushToken,
-          sound: 'default',
-          title,
-          body,
-          data: { event, payload },
-        };
-        if (process.env.PUSH_NOTIFICATION_IMAGE_URL) {
-          message.image = process.env.PUSH_NOTIFICATION_IMAGE_URL;
-        }
-
-        try {
-          const res = await fetch('https://exp.host/--/api/v2/push/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(message),
-          });
-          if (!res.ok) {
-            const txt = await res.text();
-            console.warn('Expo push API returned non-OK', res.status, txt);
-          } else {
-            const json = await res.json().catch(() => null);
-            if (json && json.errors) {
-              console.warn('Expo push API errors', json.errors);
-            }
-          }
-        } catch (err) {
-          console.warn('Error sending push to Expo API', err?.message || err);
-        }
-        return;
-      }
-
-      // If the token wasn't an Expo token we know how to deliver to, log for
-      // diagnostics. We intentionally keep server push delivery via Expo only
-      // (no Firebase/FCM integration) to match the Expo-managed workflow.
-      if (typeof pushToken === 'string') {
-        console.warn('Unrecognized push token format for driver (non-Expo token)', driverId, pushToken?.slice?.(0, 20));
-      } else {
-        console.warn('No push token available for driver', driverId);
-      }
-    } catch (err) {
-      try {
-        // best-effort logging
-        console.warn('Failed to send push notification for driver', driverId, err?.message || err);
-      } catch (_e) {}
-    }
-  })();
 }
 
 export function emitToAllDrivers(event, payload) {

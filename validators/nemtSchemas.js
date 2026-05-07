@@ -84,6 +84,13 @@ export const createRunSchema = z.object({
   notes: z.string().optional(),
 });
 
+export const autoAssignRunsSchema = z.object({
+  serviceDate: dateString,
+  driverIds: z.array(z.string()).optional(),
+  maxTripsPerRun: z.number().int().min(1).max(40).optional(),
+  commit: z.boolean().optional(),
+});
+
 export const updateRunSchema = z.object({
   label: z.string().optional(),
   driverId: z.string().optional(),
@@ -161,6 +168,8 @@ export const driverTripStatusSchema = z.object({
   actualMiles: z.number().min(0).optional(),
   noShowReason: z.string().optional(),
   passengerCancelReason: z.string().optional(),
+  eventId: z.string().optional(),
+  capturedAt: dateString.optional(),
 });
 
 export const reportIssueSchema = z.object({

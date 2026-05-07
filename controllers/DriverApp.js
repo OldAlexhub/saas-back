@@ -71,14 +71,12 @@ function sanitizeDriver(driver) {
   delete plain.ssn;
   delete plain.history;
   if (plain.driverApp) {
-    const { forcePasswordReset = false, lastLoginAt, lastLogoutAt, deviceId, pushToken } =
-      plain.driverApp;
+    const { forcePasswordReset = false, lastLoginAt, lastLogoutAt, deviceId } = plain.driverApp;
     plain.driverApp = {
       forcePasswordReset: Boolean(forcePasswordReset),
       lastLoginAt: lastLoginAt || null,
       lastLogoutAt: lastLogoutAt || null,
       deviceId: deviceId || null,
-      pushToken: pushToken || null,
     };
   }
   return plain;
@@ -489,7 +487,7 @@ export const getDriverFare = async (_req, res) => {
 
 export const listMyBookings = async (req, res) => {
   try {
-    const { status, from, to } = req.query || {};
+    const { status, from, to, page, limit } = req.query || {};
     const statuses = Array.isArray(status)
       ? status
       : typeof status === "string" && status.length
@@ -515,12 +513,28 @@ export const listMyBookings = async (req, res) => {
       if (toDate) query.pickupTime.$lte = toDate;
     }
 
-    const bookings = await BookingModel.find(query)
-      .select(DRIVER_VISIBLE_BOOKING_FIELDS.join(" "))
-      .sort({ pickupTime: 1 })
-      .lean();
+    // Pagination — only applied when page/limit are explicitly provided
+    const pageNum = page ? Math.max(1, parseInt(page, 10) || 1) : null;
+    const limitNum = pageNum ? Math.min(200, Math.max(1, parseInt(limit, 10) || 50)) : null;
+    const skip = pageNum && limitNum ? (pageNum - 1) * limitNum : 0;
 
-    return res.status(200).json({ count: bookings.length, bookings: bookings.map(sanitizeBooking) });
+    let q = BookingModel.find(query)
+      .select(DRIVER_VISIBLE_BOOKING_FIELDS.join(" "))
+      .sort({ pickupTime: -1 });
+
+    if (limitNum) q = q.skip(skip).limit(limitNum);
+
+    const [bookings, total] = await Promise.all([
+      q.lean(),
+      pageNum ? BookingModel.countDocuments(query) : Promise.resolve(null),
+    ]);
+
+    return res.status(200).json({
+      count: bookings.length,
+      total: total ?? bookings.length,
+      page: pageNum ?? 1,
+      bookings: bookings.map(sanitizeBooking),
+    });
   } catch (error) {
     console.error("Driver bookings error:", error);
     return res.status(500).json({ message: "Server error while fetching bookings." });
@@ -1669,39 +1683,6 @@ export const updateMyBookingStatus = async (req, res) => {
   } catch (error) {
     console.error("Driver status update error:", error);
     return res.status(500).json({ message: "Server error while updating booking status." });
-  }
-};
-
-export const registerDriverPushToken = async (req, res) => {
-  try {
-    const { pushToken, deviceId } = req.body || {};
-    // Log token type (expo vs native) and deviceId for diagnostics. This is
-    // low-risk and helps determine whether drivers register Expo tokens or
-    // native tokens (useful when verifying notification delivery behavior).
-    try {
-      const tokenType = typeof pushToken === 'string' && pushToken.startsWith('ExponentPushToken[') ? 'expo' : 'native';
-      console.info(`registerDriverPushToken: driver=${req.driver?.driverId ?? req.driver?.id ?? 'unknown'} deviceId=${deviceId ?? 'n/a'} tokenType=${tokenType}`);
-    } catch (_e) {}
-    if (!pushToken || typeof pushToken !== "string") {
-      return res.status(400).json({ message: "pushToken is required." });
-    }
-
-    const driver = await DriverModel.findById(req.driver.id);
-    if (!driver) {
-      return res.status(404).json({ message: "Driver not found." });
-    }
-
-    if (!driver.driverApp) driver.driverApp = {};
-    driver.driverApp.pushToken = String(pushToken).trim();
-    if (deviceId !== undefined) {
-      driver.driverApp.deviceId = deviceId ? String(deviceId).trim() : undefined;
-    }
-    await driver.save();
-
-    return res.status(200).json({ message: "Push token registered.", driver: sanitizeDriver(driver) });
-  } catch (error) {
-    console.error("Driver push token registration error:", error);
-    return res.status(500).json({ message: "Server error while registering push token." });
   }
 };
 

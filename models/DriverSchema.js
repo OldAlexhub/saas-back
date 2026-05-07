@@ -18,7 +18,6 @@ const DriverAppAuthSchema = new mongoose.Schema(
     lastLoginAt: { type: Date },
     lastLogoutAt: { type: Date },
     deviceId: { type: String },
-    pushToken: { type: String },
   },
   { _id: false }
 );

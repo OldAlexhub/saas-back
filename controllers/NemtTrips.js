@@ -15,6 +15,106 @@ const TERMINAL_STATUSES = new Set([
   "PassengerCancelled",
 ]);
 
+function startOfUtcDay(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCHours(0, 0, 0, 0);
+  return date;
+}
+
+function endOfUtcDay(value) {
+  const date = startOfUtcDay(value);
+  if (!date) return null;
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date;
+}
+
+function buildServiceDateFilter(query = {}) {
+  if (query.serviceDate) {
+    const from = startOfUtcDay(query.serviceDate);
+    const to = endOfUtcDay(query.serviceDate);
+    if (from && to) return { $gte: from, $lt: to };
+  }
+
+  const range = {};
+  if (query.serviceDate_gte || query.from) {
+    const from = startOfUtcDay(query.serviceDate_gte || query.from);
+    if (from) range.$gte = from;
+  }
+  if (query.serviceDate_lte || query.to) {
+    const to = endOfUtcDay(query.serviceDate_lte || query.to);
+    if (to) range.$lt = to;
+  }
+  return Object.keys(range).length ? range : null;
+}
+
+function combineWithServiceDate(value, serviceDate) {
+  if (value == null || value === "") return undefined;
+  const base = startOfUtcDay(serviceDate);
+  if (!base) return undefined;
+
+  let hours = 0;
+  let minutes = 0;
+  let seconds = 0;
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    hours = value.getHours();
+    minutes = value.getMinutes();
+    seconds = value.getSeconds();
+  } else if (typeof value === "number" && Number.isFinite(value)) {
+    const fraction = value >= 1 ? value % 1 : value;
+    const totalSeconds = Math.round(fraction * 24 * 60 * 60);
+    hours = Math.floor(totalSeconds / 3600);
+    minutes = Math.floor((totalSeconds % 3600) / 60);
+    seconds = totalSeconds % 60;
+  } else {
+    const raw = String(value).trim();
+    const timeOnly = raw.match(/^(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(am|pm)?$/i);
+    if (timeOnly) {
+      hours = Number(timeOnly[1]);
+      minutes = Number(timeOnly[2] || 0);
+      seconds = Number(timeOnly[3] || 0);
+      const meridiem = timeOnly[4]?.toLowerCase();
+      if (meridiem === "pm" && hours < 12) hours += 12;
+      if (meridiem === "am" && hours === 12) hours = 0;
+    } else {
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) return undefined;
+      hours = parsed.getHours();
+      minutes = parsed.getMinutes();
+      seconds = parsed.getSeconds();
+    }
+  }
+
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) {
+    return undefined;
+  }
+
+  return new Date(
+    base.getUTCFullYear(),
+    base.getUTCMonth(),
+    base.getUTCDate(),
+    hours,
+    minutes,
+    seconds,
+    0
+  );
+}
+
+function applyDefaultPickupWindow(data, settings) {
+  if (!data.scheduledPickupTime) return;
+  const pickupTime = new Date(data.scheduledPickupTime);
+  if (Number.isNaN(pickupTime.getTime())) return;
+  const before = Number(settings?.defaultPickupWindowMinutesBefore ?? 15);
+  const after = Number(settings?.defaultPickupWindowMinutesAfter ?? 30);
+  if (!data.pickupWindowEarliest) {
+    data.pickupWindowEarliest = new Date(pickupTime.getTime() - before * 60_000);
+  }
+  if (!data.pickupWindowLatest) {
+    data.pickupWindowLatest = new Date(pickupTime.getTime() + after * 60_000);
+  }
+}
+
 // Auto-calculate driverPay from agencyFare + settings when not explicitly supplied.
 // defaultPayPercentage = company's deduction %; driver receives (100 - X)% of agencyFare.
 function applyDefaultPay(data, settings) {
@@ -45,15 +145,11 @@ async function geocodeTripIfNeeded(data) {
 }
 
 export async function listTrips(req, res) {
-  const { serviceDate, status, agencyId, runId, driverId, page = "1", limit = "50" } = req.query;
+  const { status, agencyId, runId, driverId, page = "1", limit = "50" } = req.query;
   const filter = {};
 
-  if (serviceDate) {
-    const day = new Date(serviceDate);
-    const next = new Date(day);
-    next.setDate(day.getDate() + 1);
-    filter.serviceDate = { $gte: day, $lt: next };
-  }
+  const serviceDateFilter = buildServiceDateFilter(req.query);
+  if (serviceDateFilter) filter.serviceDate = serviceDateFilter;
   if (status) {
     filter.status = { $in: Array.isArray(status) ? status : status.split(",") };
   }
@@ -90,6 +186,7 @@ export async function createTrip(req, res) {
   const data = { ...req.body };
   const settings = await NemtSettingsModel.findById(NEMT_SETTINGS_ID).lean();
   applyDefaultPay(data, settings);
+  applyDefaultPickupWindow(data, settings);
   await geocodeTripIfNeeded(data);
   const trip = new NemtTripModel(data);
   await saveWithIdRetry(() => trip.save(), ["tripId"]);
@@ -108,6 +205,7 @@ export async function bulkCreateTrips(req, res) {
     try {
       const data = { ...tripList[i], importBatchId };
       applyDefaultPay(data, settings);
+      applyDefaultPickupWindow(data, settings);
       await geocodeTripIfNeeded(data);
       const trip = new NemtTripModel(data);
       await saveWithIdRetry(() => trip.save(), ["tripId"]);
@@ -146,18 +244,45 @@ export async function importTrips(req, res) {
   }
 
   const importBatchId = `IMPORT-${Date.now()}`;
-  const serviceDateObj = new Date(serviceDate);
+  const serviceDateObj = startOfUtcDay(serviceDate);
+  const serviceDateEnd = endOfUtcDay(serviceDate);
+  if (!serviceDateObj || !serviceDateEnd) {
+    return res.status(400).json({ message: "serviceDate is invalid." });
+  }
   const settings = await NemtSettingsModel.findById(NEMT_SETTINGS_ID).lean();
   const created = [];
   const rowErrors = [];
+  const seenRefs = new Set();
 
   for (let i = 0; i < rows.length; i++) {
     const data = { ...rows[i], agencyId, serviceDate: serviceDateObj, importBatchId };
+    data.scheduledPickupTime = combineWithServiceDate(data.scheduledPickupTime, serviceDateObj);
+    data.appointmentTime = combineWithServiceDate(data.appointmentTime, serviceDateObj);
+    data.pickupWindowEarliest = combineWithServiceDate(data.pickupWindowEarliest, serviceDateObj);
+    data.pickupWindowLatest = combineWithServiceDate(data.pickupWindowLatest, serviceDateObj);
     applyDefaultPay(data, settings);
+    applyDefaultPickupWindow(data, settings);
     if (!data.passengerName) { rowErrors.push({ row: i + 2, message: "Missing passenger name." }); continue; }
     if (!data.pickupAddress) { rowErrors.push({ row: i + 2, message: "Missing pickup address." }); continue; }
     if (!data.dropoffAddress) { rowErrors.push({ row: i + 2, message: "Missing dropoff address." }); continue; }
     if (!data.scheduledPickupTime) { rowErrors.push({ row: i + 2, message: "Missing scheduled pickup time." }); continue; }
+    if (data.agencyTripRef) {
+      const duplicateKey = String(data.agencyTripRef).trim().toLowerCase();
+      if (seenRefs.has(duplicateKey)) {
+        rowErrors.push({ row: i + 2, message: `Duplicate trip ref '${data.agencyTripRef}' in this file.` });
+        continue;
+      }
+      seenRefs.add(duplicateKey);
+      const existing = await NemtTripModel.findOne({
+        agencyId,
+        agencyTripRef: data.agencyTripRef,
+        serviceDate: { $gte: serviceDateObj, $lt: serviceDateEnd },
+      }).select("_id tripId").lean();
+      if (existing) {
+        rowErrors.push({ row: i + 2, message: `Duplicate agency trip ref '${data.agencyTripRef}' already exists as trip #${existing.tripId}.` });
+        continue;
+      }
+    }
 
     try {
       await geocodeTripIfNeeded(data);
@@ -219,7 +344,8 @@ export async function cancelTrip(req, res) {
   }
 
   const prevStatus = trip.status;
-  trip.status = "Cancelled";
+  const nextStatus = cancelledBy === "passenger" ? "PassengerCancelled" : "Cancelled";
+  trip.status = nextStatus;
   trip.cancelledBy = cancelledBy;
   trip.cancelReason = cancelReason;
   trip.cancelledAt = new Date();
@@ -227,7 +353,7 @@ export async function cancelTrip(req, res) {
     action: "cancel",
     byUserId: req.admin?.id,
     before: { status: prevStatus },
-    after: { status: "Cancelled" },
+    after: { status: nextStatus },
     note: cancelReason,
   });
   await trip.save();

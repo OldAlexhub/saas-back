@@ -189,7 +189,7 @@ export async function createPayBatch(req, res) {
 }
 
 export async function updatePayBatch(req, res) {
-  const { status, paidAt, referenceNumber, notes } = req.body;
+  const { status, paidAt, referenceNumber, paymentMethod, notes } = req.body;
   const batch = await NemtPaymentBatchModel.findOne({
     _id: req.params.id,
     batchType: "driver_pay",
@@ -199,7 +199,19 @@ export async function updatePayBatch(req, res) {
   if (status !== undefined) batch.status = status;
   if (paidAt) batch.paidAt = new Date(paidAt);
   if (referenceNumber !== undefined) batch.referenceNumber = referenceNumber;
+  if (paymentMethod !== undefined) batch.paymentMethod = paymentMethod || null;
   if (notes !== undefined) batch.notes = notes;
+
+  // Record payout history entry when marking as paid
+  if (status === "paid") {
+    if (!Array.isArray(batch.history)) batch.history = [];
+    batch.history.push({
+      at: new Date(),
+      by: req.user?.id || "admin",
+      action: "paid",
+      note: [paymentMethod, referenceNumber].filter(Boolean).join(" · ") || "Marked as paid",
+    });
+  }
 
   if (status === "paid") {
     const resolvedRef = referenceNumber ?? batch.referenceNumber;

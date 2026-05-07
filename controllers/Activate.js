@@ -126,6 +126,8 @@ export const addActive = async (req, res) => {
     payload.make = vehicleDoc.make;
     payload.model = vehicleDoc.model;
     payload.color = vehicleDoc.color;
+    payload.nemtCapabilities = vehicleDoc.nemtCapabilities || {};
+    payload.nemtCapacity = vehicleDoc.nemtCapacity || {};
     payload.cabNumber = vehicleDoc.cabNumber;
 
     // Populate vehicle compliance snapshot on the active record
@@ -250,6 +252,8 @@ export const updateActive = async (req, res) => {
     baseUpdates.make = vehicleDoc.make;
     baseUpdates.model = vehicleDoc.model;
     baseUpdates.color = vehicleDoc.color;
+    baseUpdates.nemtCapabilities = vehicleDoc.nemtCapabilities || {};
+    baseUpdates.nemtCapacity = vehicleDoc.nemtCapacity || {};
     // Keep compliance snapshot up-to-date when vehicle assignment changes
     baseUpdates.regisExpiry = vehicleDoc.regisExpiry || null;
     baseUpdates.annualInspection = vehicleDoc.annualInspection || null;

@@ -4,6 +4,35 @@ import path from "path";
 import config from "../config/index.js";
 import VehicleModel from "../models/VehicleSchema.js";
 
+function boolValue(value, fallback = false) {
+  if (value === undefined) return fallback;
+  if (typeof value === "boolean") return value;
+  return ["true", "1", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function numberValue(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildNemtVehicleFields(body = {}) {
+  return {
+    nemtCapabilities: {
+      ambulatory: boolValue(body.nemtAmbulatory, true),
+      wheelchair: boolValue(body.nemtWheelchair),
+      wheelchairXL: boolValue(body.nemtWheelchairXL),
+      stretcher: boolValue(body.nemtStretcher),
+    },
+    nemtCapacity: {
+      ambulatorySeats: numberValue(body.nemtAmbulatorySeats, 4),
+      wheelchairPositions: numberValue(body.nemtWheelchairPositions, 0),
+      stretcherPositions: numberValue(body.nemtStretcherPositions, 0),
+      maxPassengerCount: numberValue(body.nemtMaxPassengerCount, 4),
+    },
+  };
+}
+
 // Helper: some tests/mock setups replace model methods with plain async
 // functions that return an object instead of a Query. When callers use
 // `.lean()` we need to support both behaviors. This helper accepts the
@@ -135,6 +164,7 @@ export const addVehicle = async (req, res) => {
       model,
       year,
       color,
+      ...buildNemtVehicleFields(req.body),
       // temporary set, will overwrite below if we upload to GridFS
       annualInspectionFile: buildFileRecord(req.file),
     });
@@ -225,6 +255,7 @@ export const updateVehicle = async (req, res) => {
     for (const f of fields) {
       if (f in req.body) updates[f] = req.body[f];
     }
+    Object.assign(updates, buildNemtVehicleFields(req.body));
 
     if (req.file) {
       await removeOldFile(vehicle.annualInspectionFile);

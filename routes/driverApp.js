@@ -15,7 +15,6 @@ import {
     listMyBookings,
     heartbeatTripSession,
     recoverActiveTrip,
-    registerDriverPushToken,
     reportBookingLocation,
     startTripSession,
     startDuty,
@@ -55,7 +54,6 @@ router.patch("/bookings/:id/status", updateMyBookingStatus);
 router.post("/bookings/:id/location", reportBookingLocation);
 router.post("/flagdowns", createFlagdownRide);
 router.patch("/presence", updatePresence);
-router.post("/push-token", registerDriverPushToken);
 router.post("/messages/:id/acknowledge", driverAcknowledgeMessage);
 router.post("/messages/:id/snooze", driverSnoozeMessage);
 router.post("/hos", appendHos);

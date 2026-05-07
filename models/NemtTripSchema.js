@@ -165,7 +165,7 @@ const NemtTripSchema = new mongoose.Schema(
     // OTP
     otpStatus: {
       type: String,
-      enum: ["on_time", "early", "late", "no_data"],
+      enum: ["on_time", "early", "late", "very_late", "no_data"],
       default: "no_data",
     },
     scheduledVsActualMinutes: { type: Number },

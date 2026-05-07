@@ -26,21 +26,44 @@ const COLUMN_MAP = {
   "mobility type": "mobilityType",
   mobilitytype: "mobilityType",
   "mobility code": "mobilityType",
+  "level of service": "mobilityType",
+  los: "mobilityType",
   "pickup address": "pickupAddress",
   pickupaddress: "pickupAddress",
   pickup: "pickupAddress",
   "pick up address": "pickupAddress",
+  "pu address": "pickupAddress",
+  "pickup street": "pickupStreet",
+  "pickup city": "pickupCity",
+  "pickup state": "pickupState",
+  "pickup zip": "pickupZip",
+  "pickup zipcode": "pickupZip",
   "dropoff address": "dropoffAddress",
   dropoffaddress: "dropoffAddress",
   destination: "dropoffAddress",
+  "destination address": "dropoffAddress",
   dropoff: "dropoffAddress",
   "drop off": "dropoffAddress",
   "drop off address": "dropoffAddress",
+  "do address": "dropoffAddress",
+  "dropoff street": "dropoffStreet",
+  "dropoff city": "dropoffCity",
+  "dropoff state": "dropoffState",
+  "dropoff zip": "dropoffZip",
+  "dropoff zipcode": "dropoffZip",
   "pickup time": "scheduledPickupTime",
   pickuptime: "scheduledPickupTime",
   "scheduled pickup": "scheduledPickupTime",
   scheduledpickuptime: "scheduledPickupTime",
   "pick up time": "scheduledPickupTime",
+  "pu time": "scheduledPickupTime",
+  "ready time": "scheduledPickupTime",
+  "pickup window start": "pickupWindowEarliest",
+  "pickup window earliest": "pickupWindowEarliest",
+  "earliest pickup": "pickupWindowEarliest",
+  "pickup window end": "pickupWindowLatest",
+  "pickup window latest": "pickupWindowLatest",
+  "latest pickup": "pickupWindowLatest",
   "appointment time": "appointmentTime",
   appointmenttime: "appointmentTime",
   appointment: "appointmentTime",
@@ -59,6 +82,10 @@ const COLUMN_MAP = {
   instructions: "specialInstructions",
   notes: "specialInstructions",
   comments: "specialInstructions",
+  "trip direction": "tripDirection",
+  direction: "tripDirection",
+  leg: "tripDirection",
+  "leg type": "tripDirection",
   attendants: "attendantCount",
   attendantcount: "attendantCount",
   "attendant count": "attendantCount",
@@ -114,8 +141,35 @@ function coerceMobilityType(raw) {
   return "ambulatory";
 }
 
+function compactAddress(parts) {
+  return parts
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function coerceTripDirection(raw) {
+  const s = String(raw || "").toLowerCase().replace(/[\s_-]+/g, "");
+  if (!s) return undefined;
+  if (s.includes("return") || s === "r" || s.includes("inbound")) return "return";
+  return "outbound";
+}
+
 function normalizeRow(rawRow) {
   const r = mapRowHeaders(rawRow);
+
+  if (!r.pickupAddress) {
+    r.pickupAddress = compactAddress([r.pickupStreet, r.pickupCity, r.pickupState, r.pickupZip]);
+  }
+  if (!r.dropoffAddress) {
+    r.dropoffAddress = compactAddress([r.dropoffStreet, r.dropoffCity, r.dropoffState, r.dropoffZip]);
+  }
+  for (const key of [
+    "pickupStreet", "pickupCity", "pickupState", "pickupZip",
+    "dropoffStreet", "dropoffCity", "dropoffState", "dropoffZip",
+  ]) {
+    delete r[key];
+  }
 
   if (r.passengerCount !== undefined) {
     r.passengerCount = parseInt(r.passengerCount, 10);
@@ -127,6 +181,11 @@ function normalizeRow(rawRow) {
   }
   if (r.mobilityType !== undefined) {
     r.mobilityType = coerceMobilityType(r.mobilityType);
+  }
+  if (r.tripDirection !== undefined) {
+    const direction = coerceTripDirection(r.tripDirection);
+    if (direction) r.tripDirection = direction;
+    else delete r.tripDirection;
   }
 
   if (r.estimatedMiles !== undefined) {

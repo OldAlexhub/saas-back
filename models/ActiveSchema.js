@@ -40,6 +40,18 @@ const ActiveSchema = new mongoose.Schema({
   make:       { type: String },
   model:      { type: String },
   color:      { type: String },
+  nemtCapabilities: {
+    ambulatory: { type: Boolean, default: true },
+    wheelchair: { type: Boolean, default: false },
+    wheelchairXL: { type: Boolean, default: false },
+    stretcher: { type: Boolean, default: false },
+  },
+  nemtCapacity: {
+    ambulatorySeats: { type: Number, default: 4, min: 0 },
+    wheelchairPositions: { type: Number, default: 0, min: 0 },
+    stretcherPositions: { type: Number, default: 0, min: 0 },
+    maxPassengerCount: { type: Number, default: 4, min: 1 },
+  },
   // Snapshot of key vehicle compliance fields for quick checks on the roster
   regisExpiry: { type: Date },
   annualInspection: { type: Date },

@@ -2,6 +2,7 @@ import NemtRunModel from "../models/NemtRunSchema.js";
 import NemtTripModel, { NEMT_DRIVER_TRIP_SELECT } from "../models/NemtTripSchema.js";
 import { NEMT_SETTINGS_ID, NemtSettingsModel } from "../models/NemtSettingsSchema.js";
 import NemtPaymentBatchModel from "../models/NemtPaymentBatchSchema.js";
+import NemtTripEventModel from "../models/NemtTripEventSchema.js";
 import { toDriverNemtRunPayload, toDriverNemtTripPayload } from "../realtime/nemtPayloads.js";
 import { emitToAdmins } from "../realtime/index.js";
 
@@ -31,7 +32,7 @@ export async function getMyNemtRuns(req, res) {
   const runs = await NemtRunModel.find({
     driverId,
     serviceDate: { $gte: today, $lt: inSevenDays },
-    status: { $nin: ["Cancelled"] },
+    status: { $in: ["Dispatched", "Acknowledged", "Active", "Completed"] },
   })
     .sort({ serviceDate: 1 })
     .lean();
@@ -75,7 +76,15 @@ export async function acknowledgeNemtRun(req, res) {
 
 export async function updateNemtTripStatus(req, res) {
   const { driverId } = req.driver;
-  const { status, actualMiles, noShowReason, passengerCancelReason } = req.body;
+  const { status, actualMiles, noShowReason, passengerCancelReason, eventId, capturedAt } = req.body;
+
+  if (eventId) {
+    const existingEvent = await NemtTripEventModel.findOne({ driverId, eventId }).lean();
+    if (existingEvent) {
+      const currentTrip = await NemtTripModel.findById(req.params.id).select(NEMT_DRIVER_TRIP_SELECT).lean();
+      return res.status(200).json({ trip: toDriverNemtTripPayload(currentTrip), duplicate: true });
+    }
+  }
 
   const trip = await NemtTripModel.findById(req.params.id);
   if (!trip) return res.status(404).json({ message: "Trip not found." });
@@ -93,25 +102,28 @@ export async function updateNemtTripStatus(req, res) {
     });
   }
 
-  const now = new Date();
+  const receivedAt = new Date();
+  const eventTime = capturedAt && !Number.isNaN(new Date(capturedAt).getTime())
+    ? new Date(capturedAt)
+    : receivedAt;
   const prevStatus = trip.status;
   trip.status = status;
 
   switch (status) {
     case "EnRoute":
-      trip.enRouteAt = now;
+      trip.enRouteAt = eventTime;
       break;
     case "ArrivedPickup":
-      trip.arrivedPickupAt = now;
+      trip.arrivedPickupAt = eventTime;
       break;
     case "PickedUp":
-      trip.pickedUpAt = now;
+      trip.pickedUpAt = eventTime;
       break;
     case "ArrivedDrop":
-      trip.arrivedDropAt = now;
+      trip.arrivedDropAt = eventTime;
       break;
     case "Completed": {
-      trip.completedAt = now;
+      trip.completedAt = eventTime;
       if (actualMiles != null) trip.actualMiles = actualMiles;
 
       // OTP calculation
@@ -138,24 +150,38 @@ export async function updateNemtTripStatus(req, res) {
       break;
     }
     case "NoShow":
-      trip.noShowAt = now;
+      trip.noShowAt = eventTime;
       if (noShowReason) trip.noShowReason = noShowReason;
       break;
     case "PassengerCancelled":
-      trip.cancelledAt = now;
+      trip.cancelledAt = eventTime;
       trip.cancelledBy = "passenger";
       if (passengerCancelReason) trip.cancelReason = passengerCancelReason;
       break;
   }
 
   await trip.save();
+  if (eventId) {
+    await NemtTripEventModel.create({
+      eventId,
+      driverId,
+      tripId: trip._id,
+      runId: trip.runId,
+      type: `status:${status}`,
+      capturedAt: eventTime,
+      receivedAt,
+      payload: { status, actualMiles, noShowReason, passengerCancelReason },
+    }).catch((err) => {
+      if (err?.code !== 11000) throw err;
+    });
+  }
 
   // Promote run to Active when driver begins first trip in the run
   if (status === "EnRoute" && trip.runId) {
     const run = await NemtRunModel.findById(trip.runId);
     if (run && ["Acknowledged", "Dispatched", "Assigned"].includes(run.status)) {
       run.status = "Active";
-      run.startedAt = run.startedAt || now;
+      run.startedAt = run.startedAt || eventTime;
       await run.save();
       emitToAdmins("nemt:run-started", {
         runId: run.runId,
@@ -184,7 +210,7 @@ export async function updateNemtTripStatus(req, res) {
       const run = await NemtRunModel.findById(trip.runId);
       if (run && run.status === "Active") {
         run.status = "Completed";
-        run.completedAt = now;
+        run.completedAt = eventTime;
         await run.save();
         emitToAdmins("nemt:run-completed", {
           runId: run.runId,

@@ -22,6 +22,18 @@ const VehicleSchema = mongoose.Schema({
   model: { type: String },
   year: { type: Number, required: true },
   color: { type: String },
+  nemtCapabilities: {
+    ambulatory: { type: Boolean, default: true },
+    wheelchair: { type: Boolean, default: false },
+    wheelchairXL: { type: Boolean, default: false },
+    stretcher: { type: Boolean, default: false },
+  },
+  nemtCapacity: {
+    ambulatorySeats: { type: Number, default: 4, min: 0 },
+    wheelchairPositions: { type: Number, default: 0, min: 0 },
+    stretcherPositions: { type: Number, default: 0, min: 0 },
+    maxPassengerCount: { type: Number, default: 4, min: 1 },
+  },
   ageVehicle: { type: Number },
   history: [
     {

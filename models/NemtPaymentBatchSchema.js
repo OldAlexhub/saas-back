@@ -29,6 +29,11 @@ const NemtPaymentBatchSchema = new mongoose.Schema(
     billedAt: { type: Date },
     paidAt: { type: Date },
     referenceNumber: { type: String, trim: true },
+    paymentMethod: {
+      type: String,
+      enum: ["check", "ach", "cash", "zelle", "venmo", "other"],
+      default: null,
+    },
     notes: { type: String, default: "" },
 
     history: [

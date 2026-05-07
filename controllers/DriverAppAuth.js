@@ -53,14 +53,12 @@ function sanitizeDriver(driver) {
   delete plain.ssn;
   delete plain.history;
   if (plain.driverApp) {
-    const { forcePasswordReset = false, lastLoginAt, lastLogoutAt, deviceId, pushToken } =
-      plain.driverApp;
+    const { forcePasswordReset = false, lastLoginAt, lastLogoutAt, deviceId } = plain.driverApp;
     plain.driverApp = {
       forcePasswordReset: Boolean(forcePasswordReset),
       lastLoginAt: lastLoginAt || null,
       lastLogoutAt: lastLogoutAt || null,
       deviceId: deviceId || null,
-      pushToken: pushToken || null,
     };
   }
   return plain;
@@ -68,7 +66,7 @@ function sanitizeDriver(driver) {
 
 export const loginDriver = async (req, res) => {
   try {
-    const { identifier, email, driverId, phoneNumber, password, deviceId, pushToken } = req.body || {};
+    const { identifier, email, driverId, phoneNumber, password, deviceId } = req.body || {};
 
     if (!password) {
       return res.status(400).json({ message: "Password is required." });
@@ -153,7 +151,6 @@ export const loginDriver = async (req, res) => {
       if (!driver.driverApp) driver.driverApp = {};
       driver.driverApp.lastLoginAt = new Date();
       if (deviceId !== undefined) driver.driverApp.deviceId = deviceId ? String(deviceId) : undefined;
-      if (pushToken !== undefined) driver.driverApp.pushToken = pushToken ? String(pushToken) : undefined;
       await driver.save({ session });
     });
 

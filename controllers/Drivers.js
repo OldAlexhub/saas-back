@@ -202,7 +202,7 @@ export const updateDriver = async (req, res) => {
 export const setDriverAppCredentials = async (req, res) => {
   try {
     const { id } = req.params;
-    const { password, forcePasswordReset, deviceId, pushToken } = req.body || {};
+    const { password, forcePasswordReset, deviceId } = req.body || {};
 
     let driver = null;
     if (id && /^[0-9a-fA-F]{24}$/.test(String(id))) {
@@ -236,11 +236,6 @@ export const setDriverAppCredentials = async (req, res) => {
     if (deviceId !== undefined) {
       if (!driver.driverApp) driver.driverApp = {};
       driver.driverApp.deviceId = deviceId ? String(deviceId) : undefined;
-    }
-
-    if (pushToken !== undefined) {
-      if (!driver.driverApp) driver.driverApp = {};
-      driver.driverApp.pushToken = pushToken ? String(pushToken) : undefined;
     }
 
     await driver.save();
