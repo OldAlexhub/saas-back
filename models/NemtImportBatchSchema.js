@@ -13,6 +13,8 @@ const NemtImportRowSchema = new mongoose.Schema(
     warnings: { type: [String], default: [] },
     createdTripId: { type: mongoose.Schema.Types.ObjectId, ref: "nemttrips" },
     createdTripNumber: { type: Number },
+    correctedAt: { type: Date },
+    correctionNote: { type: String },
   },
   { _id: false, suppressReservedKeysWarning: true }
 );
@@ -38,6 +40,10 @@ const NemtImportBatchSchema = new mongoose.Schema(
     rows: { type: [NemtImportRowSchema], default: [] },
     committedAt: { type: Date },
     committedBy: { type: String },
+    cancelledAt: { type: Date },
+    cancelledBy: { type: String },
+    rolledBackAt: { type: Date },
+    rolledBackBy: { type: String },
   },
   { timestamps: true }
 );

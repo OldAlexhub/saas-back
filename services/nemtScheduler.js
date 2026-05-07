@@ -119,23 +119,53 @@ async function resequenceAndSyncTrips(run, orderedIds) {
   await Promise.all(ops);
 }
 
+// Estimate whether a trip will miss its pickup window given the travel time required.
+function pickupWindowWarning(trip, bucket, avgMph) {
+  const pickup = tripPickupPosition(trip);
+  const windowLatest = trip.pickupWindowLatest ? new Date(trip.pickupWindowLatest) : null;
+  if (!windowLatest || Number.isNaN(windowLatest.getTime())) return null;
+
+  const lastTrip = bucket.trips[bucket.trips.length - 1];
+  const origin = lastTrip ? tripEndPosition(lastTrip) : driverPosition(bucket.driver);
+  if (!origin || !pickup || !avgMph) return null;
+
+  const distMiles = haversineMiles(origin.lon, origin.lat, pickup.lon, pickup.lat);
+  const travelMinutes = (distMiles / avgMph) * 60;
+  const referenceTime = lastTrip?.scheduledPickupTime
+    ? new Date(lastTrip.scheduledPickupTime).getTime()
+    : Date.now();
+  const estimatedArrivalMs = referenceTime + travelMinutes * 60_000;
+
+  if (estimatedArrivalMs > windowLatest.getTime()) {
+    const overshootMin = Math.round((estimatedArrivalMs - windowLatest.getTime()) / 60_000);
+    return `Trip #${trip.tripId || idOf(trip).slice(-6)} may miss its pickup window by ~${overshootMin} min.`;
+  }
+  return null;
+}
+
 export async function autoAssignTripsToRuns({
   serviceDate,
   driverIds = [],
-  maxTripsPerRun = 12,
+  maxTripsPerRun,
   commit = true,
 } = {}) {
   const day = startOfUtcDay(serviceDate);
   const nextDay = nextUtcDay(serviceDate);
   if (!day || !nextDay) throw createError("serviceDate is required and must be a valid date.");
 
-  const maxTrips = Math.min(40, Math.max(1, Number(maxTripsPerRun) || 12));
+  // Load settings first so we can apply onlineDriversOnly and defaultMaxTripsPerRun
+  const settings = await NemtSettingsModel.findById(NEMT_SETTINGS_ID).lean();
+  const onlineOnly = settings?.onlineDriversOnly !== false; // default true
+  const maxTrips = Math.min(40, Math.max(1, Number(maxTripsPerRun ?? settings?.defaultMaxTripsPerRun ?? 12)));
+  const avgMph = Number(settings?.avgMphForOptimization ?? 25);
+
   const driverFilter = { status: "Active" };
+  if (onlineOnly) driverFilter.availability = "Online";
   if (Array.isArray(driverIds) && driverIds.length) {
     driverFilter.driverId = { $in: driverIds.map(String) };
   }
 
-  const [drivers, trips, existingRuns, settings] = await Promise.all([
+  const [drivers, trips, existingRuns] = await Promise.all([
     ActiveModel.find(driverFilter).sort({ cabNumber: 1, driverId: 1 }).lean(),
     NemtTripModel.find({
       serviceDate: { $gte: day, $lt: nextDay },
@@ -151,11 +181,11 @@ export async function autoAssignTripsToRuns({
     })
       .populate("trips")
       .lean(),
-    NemtSettingsModel.findById(NEMT_SETTINGS_ID).lean(),
   ]);
 
   if (!drivers.length) {
-    throw createError("No active drivers are available for automatic NEMT assignment.", 409);
+    const qualifier = onlineOnly ? "online and active" : "active";
+    throw createError(`No ${qualifier} drivers are available for automatic NEMT assignment.`, 409);
   }
 
   const driverById = new Map(drivers.map((driver) => [String(driver.driverId), driver]));
@@ -189,12 +219,6 @@ export async function autoAssignTripsToRuns({
 
   const warnings = [];
   for (const trip of trips) {
-    if (["wheelchair", "wheelchair_xl", "stretcher"].includes(trip.mobilityType)) {
-      warnings.push(
-        `Trip #${trip.tripId || idOf(trip).slice(-6)} requires ${trip.mobilityType}; vehicle capability data is not modeled yet.`
-      );
-    }
-
     let candidates = buckets.filter((bucket) => bucket.trips.length < maxTrips);
     const supportedCandidates = candidates.filter((bucket) => getCapacityIssues(bucket.driver, trip).length === 0);
     if (supportedCandidates.length) {
@@ -227,6 +251,11 @@ export async function autoAssignTripsToRuns({
     }
 
     const bucket = candidates.sort((a, b) => scoreBucket(a, trip) - scoreBucket(b, trip))[0];
+
+    // Warn if trip may miss its pickup window given estimated travel time
+    const windowWarn = pickupWindowWarning(trip, bucket, avgMph);
+    if (windowWarn) warnings.push(windowWarn);
+
     bucket.trips.push(trip);
     bucket.newTrips.push(trip);
   }

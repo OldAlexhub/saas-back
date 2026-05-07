@@ -1,5 +1,6 @@
 import NemtTripModel from "../models/NemtTripSchema.js";
 import NemtRunModel from "../models/NemtRunSchema.js";
+import NemtImportBatchModel from "../models/NemtImportBatchSchema.js";
 import NemtPaymentBatchModel from "../models/NemtPaymentBatchSchema.js";
 import { NEMT_SETTINGS_ID, NemtSettingsModel } from "../models/NemtSettingsSchema.js";
 
@@ -373,6 +374,154 @@ export async function runsReport(req, res) {
     to: to?.toISOString(),
     ...totals,
     runs: rows,
+  });
+}
+
+// GET /nemt/reports/import-quality — import batch quality summary
+export async function importQualityReport(req, res) {
+  const { from, to } = parseDateRange(req.query, 30);
+  const { agencyId } = req.query;
+
+  const filter = {};
+  if (agencyId) filter.agencyId = agencyId;
+  if (from || to) {
+    filter.createdAt = {};
+    if (from) filter.createdAt.$gte = from;
+    if (to) filter.createdAt.$lte = to;
+  }
+
+  const batches = await NemtImportBatchModel.find(filter)
+    .select("batchId agencyId serviceDate status sourceFileName totalRows validRows warningRows errorRows importedRows skippedRows createdAt committedAt cancelledAt rolledBackAt")
+    .sort({ createdAt: -1 })
+    .limit(500)
+    .lean();
+
+  const totals = {
+    totalBatches: batches.length,
+    committed: 0,
+    partiallyCommitted: 0,
+    cancelled: 0,
+    staged: 0,
+    totalRows: 0,
+    validRows: 0,
+    warningRows: 0,
+    errorRows: 0,
+    importedRows: 0,
+    skippedRows: 0,
+    duplicateRows: 0,
+  };
+
+  const rows = batches.map((b) => {
+    totals.totalRows += b.totalRows || 0;
+    totals.validRows += b.validRows || 0;
+    totals.warningRows += b.warningRows || 0;
+    totals.errorRows += b.errorRows || 0;
+    totals.importedRows += b.importedRows || 0;
+    totals.skippedRows += b.skippedRows || 0;
+    if (b.status === "committed") totals.committed += 1;
+    else if (b.status === "partially_committed") totals.partiallyCommitted += 1;
+    else if (b.status === "cancelled") totals.cancelled += 1;
+    else totals.staged += 1;
+    const qualityPct = b.totalRows > 0
+      ? (((b.validRows || 0) / b.totalRows) * 100).toFixed(1)
+      : null;
+    return {
+      id: b._id.toString(),
+      batchId: b.batchId,
+      agencyId: b.agencyId,
+      serviceDate: b.serviceDate ? new Date(b.serviceDate).toISOString().substring(0, 10) : null,
+      status: b.status,
+      sourceFileName: b.sourceFileName,
+      totalRows: b.totalRows,
+      validRows: b.validRows,
+      warningRows: b.warningRows,
+      errorRows: b.errorRows,
+      importedRows: b.importedRows,
+      skippedRows: b.skippedRows,
+      qualityPct,
+      createdAt: b.createdAt,
+      committedAt: b.committedAt || null,
+      cancelledAt: b.cancelledAt || null,
+      rolledBackAt: b.rolledBackAt || null,
+    };
+  });
+
+  return res.status(200).json({
+    from: from?.toISOString(),
+    to: to?.toISOString(),
+    totals,
+    batches: rows,
+  });
+}
+
+// GET /nemt/reports/proof-of-service — proof-of-service capture completeness
+export async function proofOfServiceReport(req, res) {
+  const { from, to } = parseDateRange(req.query, 30);
+  const { agencyId, driverId } = req.query;
+
+  const filter = { status: { $in: ["Completed", "NoShow"] } };
+  if (from) filter.serviceDate = { ...filter.serviceDate, $gte: from };
+  if (to) filter.serviceDate = { ...filter.serviceDate, $lte: to };
+  if (agencyId) filter.agencyId = agencyId;
+  if (driverId) filter.driverId = driverId;
+
+  const trips = await NemtTripModel.find(filter)
+    .select("tripId agencyId serviceDate passengerName status driverId mobilityType proofOfService scheduledPickupTime")
+    .sort({ serviceDate: -1 })
+    .lean();
+
+  const totals = {
+    total: 0,
+    hasPickupGps: 0,
+    hasDropoffGps: 0,
+    hasNoShowGps: 0,
+    hasDriverNote: 0,
+    hasFlaggedIssue: 0,
+    missingPickupGps: 0,
+    missingDropoffGps: 0,
+  };
+
+  const rows = trips.map((t) => {
+    const pos = t.proofOfService || {};
+    const hasPickup = !!(pos.pickupGps?.lon && pos.pickupGps?.lat);
+    const hasDropoff = !!(pos.dropoffGps?.lon && pos.dropoffGps?.lat);
+    const hasNoShow = !!(pos.noShowGps?.lon && pos.noShowGps?.lat);
+    const hasNote = !!(pos.driverNote?.trim());
+    const hasFlag = pos.issueFlag === true;
+
+    totals.total += 1;
+    if (hasPickup) totals.hasPickupGps += 1;
+    if (hasDropoff) totals.hasDropoffGps += 1;
+    if (hasNoShow) totals.hasNoShowGps += 1;
+    if (hasNote) totals.hasDriverNote += 1;
+    if (hasFlag) totals.hasFlaggedIssue += 1;
+    if (t.status === "Completed" && !hasPickup) totals.missingPickupGps += 1;
+    if (t.status === "Completed" && !hasDropoff) totals.missingDropoffGps += 1;
+
+    return {
+      tripId: t.tripId,
+      agencyId: t.agencyId,
+      serviceDate: t.serviceDate ? new Date(t.serviceDate).toISOString().substring(0, 10) : null,
+      passengerName: t.passengerName,
+      status: t.status,
+      driverId: t.driverId || null,
+      mobilityType: t.mobilityType,
+      hasPickupGps: hasPickup,
+      hasDropoffGps: hasDropoff,
+      hasNoShowGps: hasNoShow,
+      hasDriverNote: hasNote,
+      hasFlaggedIssue: hasFlag,
+      pickupGpsCapturedAt: pos.pickupGps?.capturedAt || null,
+      dropoffGpsCapturedAt: pos.dropoffGps?.capturedAt || null,
+      driverNote: hasNote ? pos.driverNote : null,
+    };
+  });
+
+  return res.status(200).json({
+    from: from?.toISOString(),
+    to: to?.toISOString(),
+    totals,
+    trips: rows,
   });
 }
 

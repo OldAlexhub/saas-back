@@ -10,7 +10,7 @@ export const NEMT_DRIVER_TRIP_SELECT =
   "enRouteAt arrivedPickupAt pickedUpAt arrivedDropAt completedAt cancelledAt noShowAt " +
   "cancelReason noShowReason " +
   "driverPay payStatus paidAt payReference payHoldReason payDisputeReason " +
-  "otpStatus createdAt updatedAt";
+  "proofOfService otpStatus createdAt updatedAt";
 
 function setNemtPoint(doc, prefix) {
   const lon = doc[`${prefix}Lon`];
@@ -170,6 +170,27 @@ const NemtTripSchema = new mongoose.Schema(
     },
     scheduledVsActualMinutes: { type: Number },
 
+    // Proof of service — GPS coordinates and driver notes captured at key trip events
+    proofOfService: {
+      pickupGps: {
+        lon: { type: Number },
+        lat: { type: Number },
+        capturedAt: { type: Date },
+      },
+      dropoffGps: {
+        lon: { type: Number },
+        lat: { type: Number },
+        capturedAt: { type: Date },
+      },
+      noShowGps: {
+        lon: { type: Number },
+        lat: { type: Number },
+        capturedAt: { type: Date },
+      },
+      driverNote: { type: String, trim: true },
+      issueFlag: { type: Boolean, default: false },
+    },
+
     // Audit history
     history: [
       {
@@ -196,6 +217,7 @@ NemtTripSchema.index({ billingStatus: 1, status: 1 });
 NemtTripSchema.index({ payStatus: 1, driverId: 1 });
 NemtTripSchema.index({ importBatchId: 1 });
 NemtTripSchema.index({ scheduledPickupTime: 1 });
+NemtTripSchema.index({ agencyId: 1, agencyTripRef: 1, serviceDate: 1 });
 
 // ----- Pre-save: auto-assign tripId and sync GeoJSON points -----
 NemtTripSchema.pre("save", function (next) {

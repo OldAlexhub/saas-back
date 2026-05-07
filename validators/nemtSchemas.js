@@ -129,6 +129,17 @@ export const updateNemtSettingsSchema = z.object({
   defaultPayRatePerMile: z.number().min(0).optional(),
   defaultPayPercentage: z.number().min(0).max(100).optional(),
   showDriverFinance: z.boolean().optional(),
+  onlineDriversOnly: z.boolean().optional(),
+  blockDispatchToOfflineDrivers: z.boolean().optional(),
+  requireCabBeforeDispatch: z.boolean().optional(),
+  avgMphForOptimization: z.number().min(5).max(120).optional(),
+  defaultMaxTripsPerRun: z.number().int().min(1).max(40).optional(),
+  serviceTimeByMobility: z.object({
+    ambulatory:    z.number().int().min(0).optional(),
+    wheelchair:    z.number().int().min(0).optional(),
+    wheelchair_xl: z.number().int().min(0).optional(),
+    stretcher:     z.number().int().min(0).optional(),
+  }).optional(),
 });
 
 // ---- Pay / Billing Batches ----
@@ -161,7 +172,30 @@ export const updatePayBatchSchema = z.object({
   notes: z.string().optional(),
 });
 
+// ---- Import batch operations ----
+
+export const commitImportBatchSchema = z.object({
+  allowWarnings: z.boolean().optional(),
+});
+
+export const correctImportRowSchema = z.object({
+  data: z.record(z.unknown()).refine((d) => typeof d === "object" && d !== null, {
+    message: "data must be an object.",
+  }),
+  correctionNote: z.string().optional(),
+});
+
+export const cancelImportBatchSchema = z.object({
+  reason: z.string().optional(),
+});
+
+export const rollbackImportBatchSchema = z.object({
+  reason: z.string().optional(),
+});
+
 // ---- Driver App ----
+
+const gpsField = z.object({ lon: z.number(), lat: z.number() }).optional();
 
 export const driverTripStatusSchema = z.object({
   status: z.enum(["EnRoute", "ArrivedPickup", "PickedUp", "ArrivedDrop", "Completed", "NoShow", "PassengerCancelled"]),
@@ -170,6 +204,11 @@ export const driverTripStatusSchema = z.object({
   passengerCancelReason: z.string().optional(),
   eventId: z.string().optional(),
   capturedAt: dateString.optional(),
+  // Proof-of-service GPS (lat/lon captured on the device at the moment of action)
+  gpsLon: z.number().optional(),
+  gpsLat: z.number().optional(),
+  driverNote: z.string().optional(),
+  issueFlag: z.boolean().optional(),
 });
 
 export const reportIssueSchema = z.object({

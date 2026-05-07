@@ -457,13 +457,51 @@ export async function applyRunOptimization(req, res) {
 export async function dispatchRun(req, res) {
   const run = await NemtRunModel.findById(req.params.id).populate("trips");
   if (!run) return res.status(404).json({ message: "Run not found." });
-  if (!run.driverId) {
-    return res.status(400).json({ message: "Run must have an assigned driver before dispatching." });
-  }
   if (run.status === "Cancelled") return res.status(409).json({ message: "Cannot dispatch a cancelled run." });
   if (run.status === "Completed") return res.status(409).json({ message: "Run is already completed." });
+
+  if (!run.driverId) {
+    return res.status(400).json({ message: "A driver must be assigned to the run before dispatching." });
+  }
   if (!Array.isArray(run.trips) || run.trips.length === 0) {
     return res.status(400).json({ message: "Run must have at least one trip before dispatching." });
+  }
+
+  const settings = await NemtSettingsModel.findById(NEMT_SETTINGS_ID).lean();
+
+  // Cab check
+  if (settings?.requireCabBeforeDispatch && !run.cabNumber) {
+    return res.status(400).json({ message: "A cab number must be assigned before dispatching (requireCabBeforeDispatch is enabled)." });
+  }
+
+  // Online-driver check
+  const activeDriver = await ActiveModel.findOne({ driverId: run.driverId }).lean();
+  if (settings?.blockDispatchToOfflineDrivers) {
+    if (!activeDriver) {
+      return res.status(400).json({ message: "Driver is not found in the active roster. Cannot dispatch." });
+    }
+    if (activeDriver.availability !== "Online") {
+      return res.status(400).json({
+        message: `Driver is currently ${activeDriver.availability || "Offline"}. Online dispatch is required (blockDispatchToOfflineDrivers is enabled).`,
+      });
+    }
+  }
+
+  // Vehicle capability check — every trip in the run must be supported by the driver's vehicle
+  if (activeDriver) {
+    const capacityIssues = [];
+    for (const trip of run.trips) {
+      const issues = getCapacityIssues(activeDriver, trip);
+      if (issues.length) {
+        capacityIssues.push(`Trip #${trip.tripId}: ${issues.join(" ")}`);
+      }
+    }
+    if (capacityIssues.length) {
+      return res.status(400).json({
+        message: "Vehicle cannot support one or more trips in this run.",
+        issues: capacityIssues,
+      });
+    }
   }
 
   run.status = "Dispatched";

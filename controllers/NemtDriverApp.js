@@ -76,7 +76,10 @@ export async function acknowledgeNemtRun(req, res) {
 
 export async function updateNemtTripStatus(req, res) {
   const { driverId } = req.driver;
-  const { status, actualMiles, noShowReason, passengerCancelReason, eventId, capturedAt } = req.body;
+  const {
+    status, actualMiles, noShowReason, passengerCancelReason, eventId, capturedAt,
+    gpsLon, gpsLat, driverNote, issueFlag,
+  } = req.body;
 
   if (eventId) {
     const existingEvent = await NemtTripEventModel.findOne({ driverId, eventId }).lean();
@@ -109,12 +112,20 @@ export async function updateNemtTripStatus(req, res) {
   const prevStatus = trip.status;
   trip.status = status;
 
+  const hasGps = Number.isFinite(gpsLon) && Number.isFinite(gpsLat);
+
   switch (status) {
     case "EnRoute":
       trip.enRouteAt = eventTime;
       break;
     case "ArrivedPickup":
       trip.arrivedPickupAt = eventTime;
+      if (hasGps) {
+        trip.proofOfService = {
+          ...(trip.proofOfService || {}),
+          pickupGps: { lon: gpsLon, lat: gpsLat, capturedAt: eventTime },
+        };
+      }
       break;
     case "PickedUp":
       trip.pickedUpAt = eventTime;
@@ -125,6 +136,18 @@ export async function updateNemtTripStatus(req, res) {
     case "Completed": {
       trip.completedAt = eventTime;
       if (actualMiles != null) trip.actualMiles = actualMiles;
+      if (hasGps) {
+        trip.proofOfService = {
+          ...(trip.proofOfService || {}),
+          dropoffGps: { lon: gpsLon, lat: gpsLat, capturedAt: eventTime },
+        };
+      }
+      if (driverNote) {
+        trip.proofOfService = { ...(trip.proofOfService || {}), driverNote };
+      }
+      if (issueFlag != null) {
+        trip.proofOfService = { ...(trip.proofOfService || {}), issueFlag: Boolean(issueFlag) };
+      }
 
       // OTP calculation
       if (trip.scheduledPickupTime && trip.pickedUpAt) {
@@ -152,6 +175,18 @@ export async function updateNemtTripStatus(req, res) {
     case "NoShow":
       trip.noShowAt = eventTime;
       if (noShowReason) trip.noShowReason = noShowReason;
+      if (hasGps) {
+        trip.proofOfService = {
+          ...(trip.proofOfService || {}),
+          noShowGps: { lon: gpsLon, lat: gpsLat, capturedAt: eventTime },
+        };
+      }
+      if (driverNote) {
+        trip.proofOfService = { ...(trip.proofOfService || {}), driverNote };
+      }
+      if (issueFlag != null) {
+        trip.proofOfService = { ...(trip.proofOfService || {}), issueFlag: Boolean(issueFlag) };
+      }
       break;
     case "PassengerCancelled":
       trip.cancelledAt = eventTime;
@@ -159,6 +194,7 @@ export async function updateNemtTripStatus(req, res) {
       if (passengerCancelReason) trip.cancelReason = passengerCancelReason;
       break;
   }
+  trip.markModified("proofOfService");
 
   await trip.save();
   if (eventId) {

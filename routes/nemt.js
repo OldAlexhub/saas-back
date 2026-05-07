@@ -7,7 +7,10 @@ import {
   bulkCreateTrips, cancelTrip, createTrip, getTripById, importTrips,
   listTrips, markNoShow, updateTrip,
 } from "../controllers/NemtTrips.js";
-import { commitImportBatch, getImportBatch, stageImport } from "../controllers/NemtImports.js";
+import {
+  commitImportBatch, correctImportRow, cancelImportBatch, rollbackImportBatch,
+  getImportBatch, stageImport,
+} from "../controllers/NemtImports.js";
 import {
   addTripToRun, autoAssignRuns, cancelRun, createRun, dispatchRun, getRunById,
   listRuns, optimizeRunController, previewRunOptimization, applyRunOptimization,
@@ -15,8 +18,8 @@ import {
 } from "../controllers/NemtRuns.js";
 import { getNemtSettings, updateNemtSettings } from "../controllers/NemtSettings.js";
 import {
-  agencyBillingReport, cancellationsReport, driverActivityReport, liveRunsSnapshot,
-  otpReport, runsReport, tripSummaryReport,
+  agencyBillingReport, cancellationsReport, driverActivityReport, importQualityReport,
+  liveRunsSnapshot, otpReport, proofOfServiceReport, runsReport, tripSummaryReport,
 } from "../controllers/NemtReports.js";
 import {
   createBillingBatch, createPayBatch, getBillingBatch, getPayBatch,
@@ -28,8 +31,11 @@ import {
   addTripToRunSchema,
   autoAssignRunsSchema,
   bulkCreateTripsSchema,
+  cancelImportBatchSchema,
   cancelRunSchema,
   cancelTripSchema,
+  commitImportBatchSchema,
+  correctImportRowSchema,
   createAgencySchema,
   createBillingBatchSchema,
   createPayBatchSchema,
@@ -37,6 +43,7 @@ import {
   createTripSchema,
   noShowTripSchema,
   reorderRunSchema,
+  rollbackImportBatchSchema,
   updateAgencySchema,
   updateBillingBatchSchema,
   updateNemtSettingsSchema,
@@ -74,7 +81,10 @@ router.post("/trips/:id/no-show", validate(noShowTripSchema), markNoShow);
 // ---- Import staging ----
 router.post("/imports/stage", upload.single("file"), stageImport);
 router.get("/imports/:id", getImportBatch);
-router.post("/imports/:id/commit", commitImportBatch);
+router.post("/imports/:id/commit", validate(commitImportBatchSchema), commitImportBatch);
+router.patch("/imports/:id/rows/:rowNumber", validate(correctImportRowSchema), correctImportRow);
+router.post("/imports/:id/cancel", validate(cancelImportBatchSchema), cancelImportBatch);
+router.post("/imports/:id/rollback", validate(rollbackImportBatchSchema), rollbackImportBatch);
 
 // ---- Runs ----
 router.post("/runs/auto-assign", validate(autoAssignRunsSchema), autoAssignRuns);
@@ -117,5 +127,7 @@ router.get("/reports/agency-billing", agencyBillingReport);
 router.get("/reports/runs", runsReport);
 router.get("/reports/cancellations", cancellationsReport);
 router.get("/reports/live-runs", liveRunsSnapshot);
+router.get("/reports/import-quality", importQualityReport);
+router.get("/reports/proof-of-service", proofOfServiceReport);
 
 export default router;

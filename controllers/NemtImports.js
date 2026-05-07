@@ -103,50 +103,54 @@ async function geocodeTripIfNeeded(data) {
   }
 }
 
-async function normalizeStageRow(row, { agencyId, serviceDate, settings, seenRefs }) {
+async function validateRowData(data, { agencyId, serviceDate, settings, seenRefs }) {
   const day = startOfUtcDay(serviceDate);
   const next = nextUtcDay(serviceDate);
-  const data = { ...row, agencyId, serviceDate: day };
+  const normalized = { ...data, agencyId, serviceDate: day };
   const errors = [];
   const warnings = [];
 
-  data.scheduledPickupTime = combineWithServiceDate(data.scheduledPickupTime, day);
-  data.appointmentTime = combineWithServiceDate(data.appointmentTime, day);
-  data.pickupWindowEarliest = combineWithServiceDate(data.pickupWindowEarliest, day);
-  data.pickupWindowLatest = combineWithServiceDate(data.pickupWindowLatest, day);
-  applyDefaultPay(data, settings);
-  applyDefaultPickupWindow(data, settings);
+  normalized.scheduledPickupTime = combineWithServiceDate(normalized.scheduledPickupTime, day);
+  normalized.appointmentTime = combineWithServiceDate(normalized.appointmentTime, day);
+  normalized.pickupWindowEarliest = combineWithServiceDate(normalized.pickupWindowEarliest, day);
+  normalized.pickupWindowLatest = combineWithServiceDate(normalized.pickupWindowLatest, day);
+  applyDefaultPay(normalized, settings);
+  applyDefaultPickupWindow(normalized, settings);
 
-  if (!data.passengerName) errors.push("Missing passenger name.");
-  if (!data.pickupAddress) errors.push("Missing pickup address.");
-  if (!data.dropoffAddress) errors.push("Missing dropoff address.");
-  if (!data.scheduledPickupTime) errors.push("Missing or invalid scheduled pickup time.");
-  if (!data.passengerPhone) warnings.push("Passenger phone is missing.");
-  if (!data.agencyTripRef) warnings.push("Agency trip reference is missing; duplicate detection is weaker.");
+  if (!normalized.passengerName) errors.push("Missing passenger name.");
+  if (!normalized.pickupAddress) errors.push("Missing pickup address.");
+  if (!normalized.dropoffAddress) errors.push("Missing dropoff address.");
+  if (!normalized.scheduledPickupTime) errors.push("Missing or invalid scheduled pickup time.");
+  if (!normalized.passengerPhone) warnings.push("Passenger phone is missing.");
+  if (!normalized.agencyTripRef) warnings.push("Agency trip reference is missing; duplicate detection is weaker.");
 
-  if (data.agencyTripRef && day && next) {
-    const refKey = String(data.agencyTripRef).trim().toLowerCase();
+  if (normalized.agencyTripRef && day && next) {
+    const refKey = String(normalized.agencyTripRef).trim().toLowerCase();
     if (seenRefs.has(refKey)) {
-      errors.push(`Duplicate trip ref '${data.agencyTripRef}' in this file.`);
+      errors.push(`Duplicate trip ref '${normalized.agencyTripRef}' in this file.`);
     } else {
       seenRefs.add(refKey);
       const existing = await NemtTripModel.findOne({
         agencyId,
-        agencyTripRef: data.agencyTripRef,
+        agencyTripRef: normalized.agencyTripRef,
         serviceDate: { $gte: day, $lt: next },
       }).select("_id tripId").lean();
       if (existing) {
-        errors.push(`Duplicate agency trip ref '${data.agencyTripRef}' already exists as trip #${existing.tripId}.`);
+        errors.push(`Duplicate agency trip ref '${normalized.agencyTripRef}' already exists as trip #${existing.tripId}.`);
       }
     }
   }
 
   return {
     status: errors.length ? "error" : warnings.length ? "warning" : "valid",
-    data,
+    data: normalized,
     errors,
     warnings,
   };
+}
+
+async function normalizeStageRow(row, context) {
+  return validateRowData(row, context);
 }
 
 function batchPayload(batch) {
@@ -167,6 +171,8 @@ function batchPayload(batch) {
     rows: plain.rows || [],
     createdAt: plain.createdAt,
     committedAt: plain.committedAt,
+    cancelledAt: plain.cancelledAt,
+    rolledBackAt: plain.rolledBackAt,
   };
 }
 
@@ -232,6 +238,145 @@ export async function getImportBatch(req, res) {
   return res.status(200).json({ batch: batchPayload(batch) });
 }
 
+// PATCH /nemt/imports/:id/rows/:rowNumber — correct data in a staged row and re-validate
+export async function correctImportRow(req, res) {
+  const batch = await NemtImportBatchModel.findById(req.params.id);
+  if (!batch) return res.status(404).json({ message: "Import batch not found." });
+  if (batch.status !== "staged") {
+    return res.status(409).json({ message: `Cannot correct rows in a batch with status '${batch.status}'.` });
+  }
+
+  const rowNumber = Number(req.params.rowNumber);
+  const row = batch.rows.find((r) => r.rowNumber === rowNumber);
+  if (!row) return res.status(404).json({ message: `Row ${rowNumber} not found in this batch.` });
+  if (["imported", "skipped"].includes(row.status)) {
+    return res.status(409).json({ message: `Row ${rowNumber} is already '${row.status}' and cannot be corrected.` });
+  }
+
+  const { data: newData, correctionNote } = req.body;
+  const mergedData = { ...row.data, ...newData };
+
+  const settings = await NemtSettingsModel.findById(NEMT_SETTINGS_ID).lean();
+
+  // Re-validate this row in isolation (seenRefs excludes other rows in same batch)
+  const otherBatchRefs = new Set(
+    batch.rows
+      .filter((r) => r.rowNumber !== rowNumber && r.data?.agencyTripRef)
+      .map((r) => String(r.data.agencyTripRef).trim().toLowerCase())
+  );
+
+  const validated = await validateRowData(mergedData, {
+    agencyId: batch.agencyId,
+    serviceDate: batch.serviceDate,
+    settings,
+    seenRefs: otherBatchRefs,
+  });
+
+  row.data = validated.data;
+  row.status = validated.status;
+  row.errors = validated.errors;
+  row.warnings = validated.warnings;
+  row.correctedAt = new Date();
+  if (correctionNote) row.correctionNote = correctionNote;
+
+  batch.markModified("rows");
+  await batch.save();
+
+  emitToAdmins("nemt:import-row-corrected", {
+    batchId: batch.batchId,
+    id: batch._id.toString(),
+    rowNumber,
+    newStatus: row.status,
+    totalRows: batch.totalRows,
+    validRows: batch.validRows,
+    warningRows: batch.warningRows,
+    errorRows: batch.errorRows,
+  });
+
+  return res.status(200).json({ batch: batchPayload(batch) });
+}
+
+// POST /nemt/imports/:id/cancel — cancel a staged batch without importing anything
+export async function cancelImportBatch(req, res) {
+  const batch = await NemtImportBatchModel.findById(req.params.id);
+  if (!batch) return res.status(404).json({ message: "Import batch not found." });
+  if (batch.status !== "staged") {
+    return res.status(409).json({ message: `Cannot cancel a batch with status '${batch.status}'.` });
+  }
+
+  batch.status = "cancelled";
+  batch.cancelledAt = new Date();
+  batch.cancelledBy = req.user?.id || req.user?.email || "system";
+  await batch.save();
+
+  emitToAdmins("nemt:import-cancelled", {
+    batchId: batch.batchId,
+    id: batch._id.toString(),
+  });
+
+  return res.status(200).json({ batch: batchPayload(batch) });
+}
+
+// POST /nemt/imports/:id/rollback — delete trips created by this batch and mark it rolled back
+export async function rollbackImportBatch(req, res) {
+  const batch = await NemtImportBatchModel.findById(req.params.id);
+  if (!batch) return res.status(404).json({ message: "Import batch not found." });
+  if (!["committed", "partially_committed"].includes(batch.status)) {
+    return res.status(409).json({
+      message: `Only committed or partially_committed batches can be rolled back. Current status: '${batch.status}'.`,
+    });
+  }
+
+  // Collect trip IDs created by this batch
+  const importedRows = batch.rows.filter((r) => r.status === "imported" && r.createdTripId);
+
+  // Block rollback if any created trip has already started (EnRoute or beyond)
+  const startedTrips = await NemtTripModel.find({
+    _id: { $in: importedRows.map((r) => r.createdTripId) },
+    status: { $in: ["EnRoute", "ArrivedPickup", "PickedUp", "ArrivedDrop", "Completed"] },
+  }).select("tripId status").lean();
+
+  if (startedTrips.length) {
+    const ids = startedTrips.map((t) => `#${t.tripId} (${t.status})`).join(", ");
+    return res.status(409).json({
+      message: `Rollback blocked: ${startedTrips.length} trip(s) have already started: ${ids}.`,
+    });
+  }
+
+  // Delete the trips that were created and haven't started
+  const deletableIds = importedRows.map((r) => r.createdTripId);
+  await NemtTripModel.deleteMany({ _id: { $in: deletableIds } });
+
+  // Reset row statuses back to their pre-import state
+  for (const row of batch.rows) {
+    if (row.status === "imported") {
+      row.status = "valid";
+      row.createdTripId = undefined;
+      row.createdTripNumber = undefined;
+    }
+  }
+
+  batch.status = "cancelled";
+  batch.rolledBackAt = new Date();
+  batch.rolledBackBy = req.user?.id || req.user?.email || "system";
+  batch.markModified("rows");
+  await batch.save();
+
+  emitToAdmins("nemt:import-rolled-back", {
+    batchId: batch.batchId,
+    id: batch._id.toString(),
+    deletedCount: deletableIds.length,
+  });
+
+  return res.status(200).json({
+    batch: batchPayload(batch),
+    deletedTripCount: deletableIds.length,
+  });
+}
+
+// POST /nemt/imports/:id/commit
+// Body: { allowWarnings?: boolean }
+// Warning rows are only committed when allowWarnings=true is explicitly sent.
 export async function commitImportBatch(req, res) {
   const batch = await NemtImportBatchModel.findById(req.params.id);
   if (!batch) return res.status(404).json({ message: "Import batch not found." });
@@ -239,9 +384,12 @@ export async function commitImportBatch(req, res) {
     return res.status(409).json({ message: `Import batch is already ${batch.status}.` });
   }
 
+  const allowWarnings = req.body?.allowWarnings === true;
+
   const created = [];
   for (const row of batch.rows) {
-    if (!["valid", "warning"].includes(row.status)) {
+    const eligible = row.status === "valid" || (row.status === "warning" && allowWarnings);
+    if (!eligible) {
       row.status = "skipped";
       continue;
     }
@@ -265,6 +413,7 @@ export async function commitImportBatch(req, res) {
     : "committed";
   batch.committedAt = new Date();
   batch.committedBy = req.user?.id || req.user?.email || "system";
+  batch.markModified("rows");
   await batch.save();
 
   emitToAdmins("nemt:trips-imported", {
@@ -276,6 +425,7 @@ export async function commitImportBatch(req, res) {
   return res.status(201).json({
     batch: batchPayload(batch),
     created: created.length,
+    skippedWarnings: !allowWarnings ? batch.rows.filter((r) => r.status === "skipped").length : 0,
     trips: created,
   });
 }

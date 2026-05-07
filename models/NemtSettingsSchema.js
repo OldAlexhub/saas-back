@@ -40,6 +40,29 @@ const NemtSettingsSchema = new mongoose.Schema(
 
     // Whether drivers can see the finance screen in the app
     showDriverFinance: { type: Boolean, default: true },
+
+    // Auto-assignment: only consider drivers who are currently Online
+    onlineDriversOnly: { type: Boolean, default: true },
+
+    // Dispatch: block dispatching to drivers who are Offline
+    blockDispatchToOfflineDrivers: { type: Boolean, default: false },
+
+    // Dispatch: require a cab number before allowing dispatch
+    requireCabBeforeDispatch: { type: Boolean, default: false },
+
+    // Optimization: assumed average speed (mph) for travel-time estimates
+    avgMphForOptimization: { type: Number, default: 25, min: 5, max: 120 },
+
+    // Default max trips per run used by auto-assign when not overridden by caller
+    defaultMaxTripsPerRun: { type: Number, default: 12, min: 1, max: 40 },
+
+    // Service time (minutes) spent at each stop by mobility type
+    serviceTimeByMobility: {
+      ambulatory:    { type: Number, default: 3,  min: 0 },
+      wheelchair:    { type: Number, default: 8,  min: 0 },
+      wheelchair_xl: { type: Number, default: 10, min: 0 },
+      stretcher:     { type: Number, default: 12, min: 0 },
+    },
   },
   { timestamps: true, versionKey: false }
 );
